@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import pickle
 import re
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -114,30 +115,85 @@ class SeversonParser(BaseBatteryParser):
         cells: list[CanonicalCell] = []
         cycles: list[CanonicalCycle] = []
         source_files: list[str] = []
-        for json_path in json_files:
+        started_at = time.monotonic()
+        print(
+            "Parsing Severson files: "
+            f"{len(json_files)} json, {len(zip_files)} zip, {len(pkl_files)} pkl "
+            f"from {raw_dir}",
+            flush=True,
+        )
+        for file_index, json_path in enumerate(json_files, start=1):
             if self._hit_cell_limit(cells):
-                break 
+                print(f"Reached max_cells={self.max_cells}; stopping JSON parsing.", flush=True)
+                break
+            file_started_at = time.monotonic()
+            print(
+                f"[json {file_index}/{len(json_files)}] start {json_path.name} "
+                f"({json_path.stat().st_size / 1_000_000:.1f} MB)",
+                flush=True,
+            )
             batch_cells, batch_cycles = self._parse_json_file(json_path, output_dir)
             cells.extend(batch_cells)
             cycles.extend(batch_cycles)
             source_files.append(normalize_path(json_path))
+            _log_parse_progress(
+                source_name=json_path.name,
+                file_started_at=file_started_at,
+                started_at=started_at,
+                batch_cells=len(batch_cells),
+                batch_cycles=len(batch_cycles),
+                total_cells=len(cells),
+                total_cycles=len(cycles),
+            )
 
-        for zip_path in zip_files:
+        for file_index, zip_path in enumerate(zip_files, start=1):
             if self._hit_cell_limit(cells):
+                print(f"Reached max_cells={self.max_cells}; stopping zip parsing.", flush=True)
                 break
+            file_started_at = time.monotonic()
+            print(
+                f"[zip {file_index}/{len(zip_files)}] start {zip_path.name} "
+                f"({zip_path.stat().st_size / 1_000_000:.1f} MB)",
+                flush=True,
+            )
             batch_cells, batch_cycles, parsed_members = self._parse_json_zip(zip_path, output_dir, len(cells))
             cells.extend(batch_cells)
             cycles.extend(batch_cycles)
             source_files.extend(f"{normalize_path(zip_path)}::{member}" for member in parsed_members)
+            _log_parse_progress(
+                source_name=zip_path.name,
+                file_started_at=file_started_at,
+                started_at=started_at,
+                batch_cells=len(batch_cells),
+                batch_cycles=len(batch_cycles),
+                total_cells=len(cells),
+                total_cycles=len(cycles),
+            )
 
-        for pkl_path in pkl_files:
+        for file_index, pkl_path in enumerate(pkl_files, start=1):
             if self._hit_cell_limit(cells):
+                print(f"Reached max_cells={self.max_cells}; stopping pkl parsing.", flush=True)
                 break
+            file_started_at = time.monotonic()
+            print(
+                f"[pkl {file_index}/{len(pkl_files)}] start {pkl_path.name} "
+                f"({pkl_path.stat().st_size / 1_000_000:.1f} MB)",
+                flush=True,
+            )
             batch_id = _infer_batch_id(pkl_path)
             batch_cells, batch_cycles = self._parse_pkl_file(pkl_path, output_dir, batch_id)
             cells.extend(batch_cells)
             cycles.extend(batch_cycles)
             source_files.append(normalize_path(pkl_path))
+            _log_parse_progress(
+                source_name=pkl_path.name,
+                file_started_at=file_started_at,
+                started_at=started_at,
+                batch_cells=len(batch_cells),
+                batch_cycles=len(batch_cycles),
+                total_cells=len(cells),
+                total_cycles=len(cycles),
+            )
 
         if not cells:
             raise FileNotFoundError(f"No parseable Severson/BEEP cell records found under {raw_dir}.")
@@ -156,6 +212,11 @@ class SeversonParser(BaseBatteryParser):
                     "source_files": source_files,
                 }
             ],
+        )
+        print(
+            f"Finished parsing {len(cells)} cells and {len(cycles)} cycles "
+            f"in {_format_duration(time.monotonic() - started_at)}.",
+            flush=True,
         )
 
     def _hit_cell_limit(self, cells: list[CanonicalCell]) -> bool:
@@ -353,6 +414,36 @@ def _preview_zip(path: Path, limit: int = 50) -> list[dict[str, Any]]:
             {"filename": info.filename, "size_bytes": info.file_size}
             for info in zf.infolist()[:limit]
         ]
+
+
+def _log_parse_progress(
+    source_name: str,
+    file_started_at: float,
+    started_at: float,
+    batch_cells: int,
+    batch_cycles: int,
+    total_cells: int,
+    total_cycles: int,
+) -> None:
+    file_elapsed = time.monotonic() - file_started_at
+    total_elapsed = time.monotonic() - started_at
+    print(
+        f"  done {source_name}: +{batch_cells} cells, +{batch_cycles} cycles "
+        f"in {_format_duration(file_elapsed)}; totals={total_cells} cells/"
+        f"{total_cycles} cycles; elapsed={_format_duration(total_elapsed)}",
+        flush=True,
+    )
+
+
+def _format_duration(seconds: float) -> str:
+    seconds_int = int(seconds)
+    hours, remainder = divmod(seconds_int, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{seconds:.1f}s"
 
 
 def _extract_pkl_members(zip_files: list[Path], output_dir: Path) -> list[Path]:
