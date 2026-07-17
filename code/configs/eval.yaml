@@ -1,0 +1,14 @@
+experiment:
+  name: severson_eval
+  output_dir: outputs/eval
+
+data:
+  processed_dir: data/processed/severson
+  split: test
+  window: 30
+  horizon: 80
+
+evaluation:
+  num_trajectory_samples: 500
+  eol_threshold: 0.8
+

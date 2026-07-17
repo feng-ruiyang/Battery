@@ -1,0 +1,311 @@
+\documentclass[11pt,a4paper,fontset=none]{ctexart}
+
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+
+\setCJKmainfont{Songti SC}
+\setCJKsansfont{Heiti SC}
+\setCJKmonofont{Hiragino Sans GB}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue,
+  citecolor=black
+}
+
+\linespread{1.15}
+
+\title{\textbf{基于 Transformer 表征与 VBLL 解码器的电池 SoH 概率轨迹预测 Proposal}}
+\author{}
+\date{2026年7月17日}
+
+\begin{document}
+\maketitle
+
+\section{项目简介}
+
+锂离子电池健康状态（State of Health, SoH）预测是电池管理系统中的核心问题。传统方法通常输出单点预测，难以同时回答未来容量衰减趋势、寿命终点位置以及预测可信度。本项目面向这一问题，构建一套可复现的电池 SoH 概率轨迹预测流程：先将 Severson LFP 快充数据解析为统一的 cell-cycle 格式，再用 Transformer 自动编码器学习单循环曲线 latent 表示，最后通过历史 latent Transformer 和 Variational Bayesian Last Layer（VBLL）自回归解码器输出未来 SoH 轨迹分布。
+
+当前代码主线已经围绕这一流程展开，包含数据预处理、cell-level 数据划分、cycle encoder 预训练、latent cache 生成、latent window 数据加载和 SoH predictor 训练。显式退化动力学模块也已实现，但在当前代码中定位为后续对照实验和结构化解码扩展，而不是第一版训练主线。也就是说，第一版 Linux 训练应优先运行 \texttt{train\_latent\_tf\_vbll.yaml}；\texttt{train\_vbll\_dynamics.yaml} 暂时作为第二阶段占位配置，只有在模型工厂真正接入 \texttt{DegradationDynamics} 后才用于正式对照。
+
+\section{研究目标}
+
+给定某一电池截至循环 $t$ 的历史循环信号和 SoH 序列，模型学习未来 $H$ 个循环的条件预测分布：
+\[
+p(\mathbf y_{t+1:t+H}\mid X_{1:t},\mathbf y_{1:t},\mathcal D),
+\qquad \mathbf y=\mathrm{SoH}.
+\]
+
+其中原始循环信号 $X_t$ 包括电压、电流、温度等时间序列。项目最终希望输出：
+\begin{itemize}
+  \item 未来 SoH 轨迹的均值、方差和预测区间；
+  \item 多条联合 SoH 概率轨迹，用于形成概率云；
+  \item EOL 首次越过阈值的循环分布；
+  \item RUL 后验分布及可信区间；
+  \item 点预测误差、概率校准质量和计算成本的综合评估。
+\end{itemize}
+
+第一阶段目标是跑通单数据集端到端训练链路，并验证 VBLL 解码器是否能在不显著增加推理成本的情况下提供有用的不确定性估计。第二阶段再加入显式退化动力学、Deep Ensemble、MC Dropout、Laplace 或 Bayes by Backprop 等基线与消融。
+
+\section{数据集与数据流}
+
+\subsection{Severson 数据规范化}
+
+当前代码优先支持 Severson LFP fast-charge 数据集。原始数据可来自作者发布的 pickle 文件、BEEP 结构化 JSON 文件或包含 JSON 的 zip 文件。预处理脚本将原始数据转换为项目内部统一格式：
+\begin{itemize}
+  \item \texttt{cells.jsonl}：每个电池 cell 一行，记录数据集编号、cell id、batch id、循环寿命、充电策略和循环数量等元数据；
+  \item \texttt{cycles.jsonl}：每个 cell-cycle 一行，记录放电容量、充电容量、内阻、温度统计、充电时间和 SoH 标签；
+  \item \texttt{arrays/<cell\_id>/cycle\_<index>.npz}：保存单个循环的可变长曲线数组。对当前 BEEP JSON 数据，稳定可用的主通道为 \texttt{V}、\texttt{I}、\texttt{T}、\texttt{Qc}、\texttt{Qd}、\texttt{IR} 和 \texttt{step\_type}；\texttt{Qdlin}、\texttt{Tdlin}、\texttt{dQdV} 和 \texttt{t} 主要保留给 pickle 数据或后续清洗扩展；
+  \item \texttt{splits/cell\_random\_seed\_42.jsonl}：cell-level train/val/test 划分，避免同一电池的循环泄漏到不同集合。
+\end{itemize}
+
+SoH 当前按放电容量归一化定义：
+\[
+\mathrm{SoH}_t=\frac{Q^{\mathrm{discharge}}_t}{Q^{\mathrm{discharge}}_{\mathrm{first\ valid}}}.
+\]
+该定义与代码中的 \texttt{SeversonParser.\_compute\_soh()} 一致。
+
+\subsection{从 cycle 曲线到 latent window}
+
+数据流分为四步：
+\[
+\text{raw data}
+\rightarrow
+\text{canonical cycles}
+\rightarrow
+\text{cycle tensors}
+\rightarrow
+\text{latent cache}
+\rightarrow
+\text{latent windows}.
+\]
+
+首先，\texttt{CycleTensorDataset} 读取规范化后的 cycle 行和对应 \texttt{npz} 曲线数组，将每个 cycle 重采样为固定长度张量：
+\[
+x_t\in\mathbb R^{L\times C},
+\]
+其中 $L$ 为 \texttt{sequence\_length}，$C$ 默认为三个通道 \texttt{V/I/T}。缺失通道用零值张量进入模型，原始 numpy 数据集中仍保留 NaN 标记。
+
+其次，预训练好的 \texttt{CycleEncoder} 将每个 cycle 编码为 latent 表示：
+\[
+z_t=E_\phi(x_t),\qquad z_t\in\mathbb R^{d_z}.
+\]
+代码默认 $d_z=128$。所有 cycle 的 latent、SoH、cycle index 和摘要特征被保存到：
+\[
+\texttt{data/processed/severson/latents.npz}.
+\]
+
+最后，\texttt{LatentWindowDataset} 在每个 cell 内构造滑动窗口：
+\[
+\{z_{t-W+1:t},\ y_{t-W+1:t},\ y_{t+1:t+H}\},
+\]
+并过滤掉历史 SoH 不完整或未来标签完全无效的样本。当前默认配置为历史窗口 $W=30$，预测范围 $H=80$。
+
+\section{模型方法}
+
+\subsection{Cycle Transformer Autoencoder}
+
+单循环表征学习由 \texttt{CycleAutoencoder} 完成。Encoder 是 Transformer Encoder：
+\[
+z_t=E_\phi(x_t),
+\]
+输入形状为 $[B,L,C]$，输出形状为 $[B,d_z]$。Decoder 使用 learned position embedding 和 latent conditioning，以非自回归方式重构固定长度循环曲线：
+\[
+\hat{x}_t=D_\psi(z_t).
+\]
+预训练损失采用重构均方误差：
+\[
+\mathcal L_{\mathrm{rec}}
+=\frac{1}{BLC}\sum\lVert \hat{x}_t-x_t\rVert_2^2.
+\]
+
+这一阶段的作用不是直接预测 SoH，而是把高维、可变长的单循环电压/电流/温度曲线压缩为统一的低维状态表示。训练完成后，encoder 被用于离线生成 latent cache，后续 predictor 训练不再重复读取和编码原始曲线，从而降低多次实验的计算成本。
+
+\subsection{Degeneration Transformer}
+
+SoH predictor 的退化状态建模器命名为 Degeneration Transformer。代码实现对应 \texttt{Latent\-State\-Transformer}。它不是重构输入的 autoencoder，而是一个因果 latent transition model。给定最近 $W$ 个 latent：
+\[
+Z_{t-W+1:t}=[z_{t-W+1},\ldots,z_t],
+\]
+可选拼接摘要特征 $u_{t-W+1:t}$ 后输入 causal Transformer Encoder：
+\[
+h_{1:W}=A_\eta(Z_{t-W+1:t},u_{t-W+1:t}).
+\]
+最后一个有效位置的 hidden state 被视为当前退化状态：
+\[
+s_t=h_W.
+\]
+
+该模块还同时预测窗口内部的下一步 latent：
+\[
+\hat z_{i+1}=g_\eta(h_i),
+\]
+形成辅助 latent transition loss。这个辅助目标约束 Degeneration Transformer 不仅服务于 SoH 预测，也保留一部分退化状态演化一致性。
+
+\subsection{Teacher-forcing VBLL SoH Decoder}
+
+当前主模型使用自回归 SoH 轨迹解码器 \texttt{TeacherForcingTrajectoryDecoder}。训练时输入为 teacher-forcing 序列：
+\[
+[y_t,\ y_{t+1},\ldots,y_{t+H-1}],
+\]
+decoder 根据当前退化状态 $s_t$ 和前一步 SoH 预测每个未来 step 的分布。每个 step 的最后一层是 mean-field VBLL：
+\[
+p(y_{t+h}\mid s_t,y_{<t+h})
+\approx
+\mathcal N(\mu_{t+h},\sigma^2_{t+h}).
+\]
+
+代码中的 \texttt{VBLLLinear} 对最后线性层权重设定对角高斯变分后验，并解析传播到输出均值与方差。与 Monte Carlo BNN 相比，VBLL 不需要对整个网络重复采样，因而适合在多 horizon 轨迹预测中控制推理成本。
+
+模型输出包括：
+\[
+\mu_{\mathbf y}\in\mathbb R^H,\qquad
+\Sigma_{\mathbf y}=\operatorname{diag}(\sigma_1^2,\ldots,\sigma_H^2).
+\]
+当前第一版采用对角协方差；完整跨 horizon 协方差可作为后续扩展。
+
+\subsection{显式退化动力学作为第二阶段扩展}
+
+代码中已实现 \texttt{DegradationDynamics}，可将 $\theta=[s_t,c_1,\ldots,c_K]$ 映射为结构化 SoH 轨迹：
+\[
+\mathbf y=G\theta+\epsilon.
+\]
+该模块支持 piecewise-linear basis、解析协方差传播、负退化率正则和平滑正则。当前暂不把它作为第一版训练主线，原因有三点：第一，当前 \texttt{SOHProbabilisticPredictor} 已经形成了可训练的 \texttt{LatentStateTransformer + TeacherForcingTrajectoryDecoder + VBLLLinear} 主路径；第二，显式动力学要求最后一层输出 $\theta=[s_t,c_1,\ldots,c_K]$，并将 $\theta$ 的后验通过 \texttt{DegradationDynamics} 传播到完整 SoH 轨迹，这一模型工厂接线尚未完成；第三，先跑通自回归 VBLL 主线可以为后续动力学结构提供公平的同 latent cache 对照。
+
+因此，本 proposal 将显式退化动力学定位为第二阶段实验：
+\begin{itemize}
+  \item 与自回归 VBLL decoder 比较长期轨迹结构；
+  \item 检验单调和平滑正则是否改善 EOL/RUL 稳定性；
+  \item 在点预测接近时比较校准质量和推理成本。
+\end{itemize}
+
+\section{训练目标}
+
+predictor 的主要监督信号是真实未来 SoH 轨迹。对于 batch 中的有效 horizon mask，主损失为 masked Gaussian negative log likelihood：
+\[
+\mathcal L_{\mathrm{NLL}}
+=
+\frac{1}{|\Omega|}
+\sum_{(b,h)\in\Omega}
+\frac12
+\left[
+\frac{(y_{b,h}-\mu_{b,h})^2}{\sigma^2_{b,h}}
++\log \sigma^2_{b,h}
+\right].
+\]
+
+同时加入窗口内部 latent next-step 辅助损失：
+\[
+\mathcal L_{\mathrm{state}}
+=
+\frac{1}{W-1}
+\sum_{i=1}^{W-1}
+\lVert \hat z_{i+1}-z_{i+1}\rVert_2^2.
+\]
+
+总损失与当前 \texttt{training/losses.py} 对齐：
+\[
+\mathcal L
+=
+\mathcal L_{\mathrm{NLL}}
++\lambda_{\mathrm{state}}\mathcal L_{\mathrm{state}}
++\beta_{\mathrm{KL}} KL(q(W)\Vert p(W))
++\lambda_{\mathrm{neg}}\mathcal L_{\mathrm{neg}}
++\lambda_{\mathrm{smooth}}\mathcal L_{\mathrm{smooth}}.
+\]
+其中后两项主要服务于显式退化动力学扩展；在当前 \texttt{train\_latent\_tf\_vbll.yaml} 主配置中默认为 0。虽然仓库中保留了 \texttt{train\_vbll\_dynamics.yaml}，该配置目前应理解为第二阶段实验模板，而不是第一版已经接通的完整动力学训练入口。
+
+\section{实验设计}
+
+\subsection{主实验配置}
+
+第一阶段采用 Severson 单数据集，默认配置如下：
+\begin{itemize}
+  \item cycle channels：\texttt{V/I/T}；
+  \item sequence length：1000；
+  \item latent dimension：128；
+  \item history window：30；
+  \item prediction horizon：80；
+  \item history hidden dimension：256；
+  \item decoder hidden dimension：256；
+  \item optimizer：AdamW；
+  \item split：cell-level random split，seed 42。
+\end{itemize}
+
+完整运行顺序为：
+\begin{verbatim}
+python scripts/preprocess.py --config configs/preprocess_severson.yaml
+python scripts/pretrain_encoder.py --config configs/pretrain_encoder.yaml
+python scripts/cache_latents.py \
+  --config configs/pretrain_encoder.yaml \
+  --checkpoint outputs/severson_cycle_autoencoder/best.pt
+python scripts/train_predictor.py --config configs/train_latent_tf_vbll.yaml
+\end{verbatim}
+
+正式上 Linux 前建议先执行：
+\begin{verbatim}
+python -m pytest tests
+python scripts/pretrain_encoder.py --config configs/pretrain_encoder.yaml --dry-run
+python scripts/train_predictor.py --config configs/train_latent_tf_vbll.yaml --dry-run
+\end{verbatim}
+若需要启用在线 Weights \& Biases 记录，应在运行训练前通过 \texttt{wandb login} 或环境变量 \texttt{WANDB\_API\_KEY} 完成认证，不应将 token 写入代码或 YAML。
+
+\subsection{基线与消融}
+
+为了让实验与当前代码演进一致，基线分三层推进：
+\begin{itemize}
+  \item 第一层：当前 VBLL 自回归 decoder，与去掉 VBLL 的确定性线性输出头比较；
+  \item 第二层：相同 latent cache 下比较不同窗口长度、latent dimension、decoder depth、是否启用 degeneration transition loss；
+  \item 第三层：在完成模型工厂接线后加入显式退化动力学，再加入 MC Dropout、Deep Ensemble、Last-layer Laplace 和 Bayes by Backprop 等概率基线。
+\end{itemize}
+
+重点消融包括：
+\begin{itemize}
+  \item 有无 cycle autoencoder 预训练；
+  \item 共享 latent cache 与端到端微调的差异；
+  \item VBLL 与确定性 decoder 的概率校准差异；
+  \item teacher-forcing 自回归轨迹与显式退化动力学轨迹的差异；
+  \item $\lambda_{\mathrm{state}}$ 对长期预测稳定性的影响。
+\end{itemize}
+
+\subsection{评价指标}
+
+点预测指标包括 MAE、RMSE 和分 horizon 误差曲线。概率预测指标包括 NLL、区间覆盖率、区间宽度、reliability diagram 和 calibration error。RUL/EOL 评估通过从预测分布采样 SoH 轨迹，统计首次低于阈值的循环分布。计算效率报告训练时间、单次推理时间、采样轨迹生成时间、参数量和显存占用。
+
+\section{阶段计划}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+阶段 & 工作内容 & 决策标准 \\
+\midrule
+P0 & Severson 预处理、cell-level split、窗口样本检查 & 无数据泄漏，样本形状稳定 \\
+P1 & CycleAutoencoder 预训练与 latent cache 生成 & 重构损失下降，cache 可复用 \\
+P2 & Degeneration Transformer + VBLL decoder 训练 & NLL 有效下降，预测均值合理 \\
+P3 & 评价脚本、概率云、RUL/EOL 分布 & 能输出完整评估图表 \\
+P4 & 接入显式动力学并开展确定性头、VBLL、显式动力学和 ensemble 对照 & 明确贡献来源 \\
+P5 & 多随机种子、跨 batch 或第二数据集扩展 & 结果足以支撑论文主张 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{预期创新点}
+
+\begin{enumerate}
+  \item 建立从原始电池循环数据到 latent-window 概率轨迹预测的可复现实验管线。
+  \item 使用 Transformer cycle autoencoder 将可变长循环曲线压缩为共享 latent cache，降低后续多模型实验成本。
+  \item 将 Degeneration Transformer 与 teacher-forcing VBLL decoder 结合，在较低推理成本下输出 SoH 预测分布。
+  \item 将 latent next-step 辅助学习引入 SoH 轨迹预测，使历史状态同时服务于退化表征和未来 SoH 预测。
+  \item 在同一代码框架下保留显式退化动力学模块，为自回归概率解码和结构化退化解码提供公平比较。
+\end{enumerate}
+
+\section{预期成果}
+
+项目预期形成一套以 Severson 数据集为起点的 BNN--Transformer 电池 SoH 概率预测系统，包括数据解析、规范化存储、cycle autoencoder 预训练、latent cache、VBLL 轨迹预测、概率轨迹采样、RUL/EOL 估计和基线消融。若主模型在预测精度、区间覆盖率或长期轨迹稳定性上优于确定性模型和常见不确定性近似方法，可进一步整理为论文实验主线。
+
+\end{document}

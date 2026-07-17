@@ -1,0 +1,3 @@
+[submodule "code/external/severson_processing"]
+	path = code/external/severson_processing
+	url = https://github.com/rdbraatz/data-driven-prediction-of-battery-cycle-life-before-capacity-degradation.git

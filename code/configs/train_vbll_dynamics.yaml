@@ -1,0 +1,33 @@
+experiment:
+  name: severson_vbll_dynamics
+  seed: 42
+  output_dir: outputs/severson_vbll_dynamics
+
+data:
+  processed_dir: data/processed/severson
+  split_file: data/processed/severson/splits/cell_random_seed_42.jsonl
+  latent_cache: data/processed/severson/latents.npz
+  window: 30
+  horizon: 80
+  latent_dim: 128
+  aux_dim: 0
+
+model:
+  kind: vbll_dynamics
+  history_dim: 256
+  num_basis: 8
+
+training:
+  batch_size: 64
+  max_epochs: 100
+  lr: 1.0e-4
+  weight_decay: 1.0e-5
+  beta_kl: 1.0e-4
+  lambda_negative: 1.0
+  lambda_smooth: 0.1
+  device: auto
+
+logging:
+  backend: csv
+  project: battery-soh-bnn
+  offline: true

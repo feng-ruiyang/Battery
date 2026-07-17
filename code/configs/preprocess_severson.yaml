@@ -1,0 +1,23 @@
+dataset: severson
+raw_dir: data/raw/severson
+output_dir: data/processed/severson
+max_cells: null
+include_arrays:
+  - I
+  - V
+  - T
+  - Qc
+  - Qd
+  - Qdlin
+  - Tdlin
+  - dQdV
+  - t
+  - step_type
+  - point_index
+soh:
+  capacity_field: QD
+  normalization: first_valid
+splits:
+  seed: 42
+  train_ratio: 0.7
+  val_ratio: 0.15
