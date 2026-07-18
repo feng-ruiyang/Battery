@@ -70,7 +70,7 @@ def main() -> None:
         max_epochs = int(train_cfg.get("max_epochs", 1))
         try:
             for epoch in range(1, max_epochs + 1):
-                train_loss = train_one_epoch(autoencoder, train_loader, optimizer, device)
+                train_loss = train_one_epoch(autoencoder, train_loader, optimizer, device, train_cfg, epoch)
                 val_loss = evaluate(autoencoder, val_loader, device) if val_loader is not None else train_loss
                 is_best = val_loss <= best_val
                 if is_best:
@@ -122,18 +122,45 @@ def build_dataloaders(cfg: dict) -> tuple[DataLoader, DataLoader | None]:
     train_dataset = CycleTensorDataset(store, train_ids, channels, sequence_length)
     val_dataset = CycleTensorDataset(store, val_ids, channels, sequence_length) if val_ids else None
     batch_size = int(train_cfg.get("batch_size", 128))
+    loader_kwargs = _loader_kwargs(train_cfg)
+    print(
+        f"DataLoader: train_cycles={len(train_dataset)}, "
+        f"val_cycles={len(val_dataset) if val_dataset is not None else 0}, "
+        f"batch_size={batch_size}, num_workers={loader_kwargs['num_workers']}, "
+        f"pin_memory={loader_kwargs['pin_memory']}",
+        flush=True,
+    )
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_cycle_batch,
+        **loader_kwargs,
     )
     val_loader = (
-        DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_cycle_batch)
+        DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate_cycle_batch,
+            **loader_kwargs,
+        )
         if val_dataset is not None and len(val_dataset) > 0
         else None
     )
     return train_loader, val_loader
+
+
+def _loader_kwargs(train_cfg: dict) -> dict:
+    num_workers = int(train_cfg.get("num_workers", 0))
+    kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": bool(train_cfg.get("pin_memory", False)),
+    }
+    if num_workers > 0:
+        kwargs["persistent_workers"] = bool(train_cfg.get("persistent_workers", True))
+        kwargs["prefetch_factor"] = int(train_cfg.get("prefetch_factor", 2))
+    return kwargs
 
 
 def train_one_epoch(
@@ -141,19 +168,37 @@ def train_one_epoch(
     dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    train_cfg: dict,
+    epoch: int,
 ) -> float:
     model.train()
     total = 0.0
     count = 0
-    for batch in dataloader:
-        x_cycle = batch["x_cycle"].to(device)
+    log_every = int(train_cfg.get("log_every_n_steps", 0))
+    running_total = 0.0
+    running_count = 0
+    for step, batch in enumerate(dataloader, start=1):
+        x_cycle = batch["x_cycle"].to(device, non_blocking=True)
         outputs = model(x_cycle)
         loss = reconstruction_loss(outputs["x_recon"], x_cycle)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
-        total += float(loss.detach().cpu())
+        loss_value = float(loss.detach().cpu())
+        total += loss_value
         count += 1
+        running_total += loss_value
+        running_count += 1
+        if log_every > 0 and (step == 1 or step % log_every == 0 or step == len(dataloader)):
+            running_loss = running_total / max(running_count, 1)
+            epoch_loss = total / max(count, 1)
+            print(
+                f"epoch={epoch} step={step}/{len(dataloader)} "
+                f"train_recon_running={running_loss:.6f} train_recon_epoch={epoch_loss:.6f}",
+                flush=True,
+            )
+            running_total = 0.0
+            running_count = 0
     return total / max(count, 1)
 
 
@@ -163,7 +208,7 @@ def evaluate(model: CycleAutoencoder, dataloader: DataLoader, device: torch.devi
     total = 0.0
     count = 0
     for batch in dataloader:
-        x_cycle = batch["x_cycle"].to(device)
+        x_cycle = batch["x_cycle"].to(device, non_blocking=True)
         outputs = model(x_cycle)
         loss = reconstruction_loss(outputs["x_recon"], x_cycle)
         total += float(loss.detach().cpu())
