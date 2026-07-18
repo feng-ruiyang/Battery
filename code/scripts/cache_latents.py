@@ -37,6 +37,8 @@ def main() -> None:
     model = build_autoencoder(cfg).to(device)
     load_checkpoint(args.checkpoint, model)
     model.eval()
+    print(f"Loaded checkpoint: {args.checkpoint}", flush=True)
+    print(f"Device: {device}", flush=True)
 
     store = CanonicalCycleStore(data_cfg["processed_dir"])
     cell_ids = resolve_cell_ids(store)
@@ -48,11 +50,19 @@ def main() -> None:
     )
     if len(dataset) == 0:
         raise SystemExit("No cycles found to encode. Run preprocessing first and check processed_dir.")
+    loader_kwargs = _loader_kwargs(train_cfg)
+    batch_size = int(train_cfg.get("batch_size", 128))
+    print(
+        f"Latent cache DataLoader: cycles={len(dataset)}, batch_size={batch_size}, "
+        f"num_workers={loader_kwargs['num_workers']}, pin_memory={loader_kwargs['pin_memory']}",
+        flush=True,
+    )
     loader = DataLoader(
         dataset,
-        batch_size=int(train_cfg.get("batch_size", 128)),
+        batch_size=batch_size,
         shuffle=False,
         collate_fn=collate_cycle_batch,
+        **loader_kwargs,
     )
 
     z_batches: list[np.ndarray] = []
@@ -65,9 +75,11 @@ def main() -> None:
     }
     summaries: list[np.ndarray] = []
     summary_names = ("q_discharge", "internal_resistance", "t_avg")
+    log_every = int(train_cfg.get("log_every_n_steps", 0))
+    encoded = 0
     with torch.no_grad():
-        for batch in loader:
-            x_cycle = batch["x_cycle"].to(device)
+        for step, batch in enumerate(loader, start=1):
+            x_cycle = batch["x_cycle"].to(device, non_blocking=True)
             z = model.encoder(x_cycle)
             z_batches.append(z.cpu().numpy())
             metadata["cell_id"].extend(batch["cell_id"])
@@ -77,6 +89,12 @@ def main() -> None:
             metadata["soh"].extend(batch["soh"].cpu().numpy().tolist())
             summary_values = [batch["summaries"][name].cpu().numpy() for name in summary_names]
             summaries.append(np.stack(summary_values, axis=1))
+            encoded += int(x_cycle.shape[0])
+            if log_every > 0 and (step == 1 or step % log_every == 0 or step == len(loader)):
+                print(
+                    f"cache step={step}/{len(loader)} encoded={encoded}/{len(dataset)} cycles",
+                    flush=True,
+                )
 
     output = args.output or Path(data_cfg.get("latent_cache", Path(data_cfg["processed_dir"]) / "latents.npz"))
     save_latent_cache(
@@ -87,6 +105,18 @@ def main() -> None:
         summaries=np.concatenate(summaries, axis=0),
     )
     print(f"Wrote latent cache to {output}")
+
+
+def _loader_kwargs(train_cfg: dict) -> dict:
+    num_workers = int(train_cfg.get("num_workers", 0))
+    kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": bool(train_cfg.get("pin_memory", False)),
+    }
+    if num_workers > 0:
+        kwargs["persistent_workers"] = bool(train_cfg.get("persistent_workers", True))
+        kwargs["prefetch_factor"] = int(train_cfg.get("prefetch_factor", 2))
+    return kwargs
 
 
 def build_autoencoder(cfg: dict) -> CycleAutoencoder:
