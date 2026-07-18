@@ -91,7 +91,7 @@ def main() -> None:
     max_epochs = int(train_cfg.get("max_epochs", 1))
     try:
         for epoch in range(1, max_epochs + 1):
-            train_result = train_one_epoch(model, train_loader, optimizer, cfg, device)
+            train_result = train_one_epoch(model, train_loader, optimizer, cfg, device, epoch=epoch)
             val_result = evaluate_one_epoch(model, val_loader, cfg, device) if val_loader else train_result
             is_best = val_result.loss <= best_val
             if is_best:
@@ -179,13 +179,33 @@ def build_dataloaders(cfg: dict) -> tuple[DataLoader, DataLoader | None]:
         else None
     )
     batch_size = int(train_cfg.get("batch_size", 64))
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    loader_kwargs = _loader_kwargs(train_cfg)
+    print(
+        f"DataLoader: train_windows={len(train_dataset)}, "
+        f"val_windows={len(val_dataset) if val_dataset is not None else 0}, "
+        f"batch_size={batch_size}, num_workers={loader_kwargs['num_workers']}, "
+        f"pin_memory={loader_kwargs['pin_memory']}",
+        flush=True,
+    )
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **loader_kwargs)
     val_loader = (
-        DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        DataLoader(val_dataset, batch_size=batch_size, shuffle=False, **loader_kwargs)
         if val_dataset is not None and len(val_dataset) > 0
         else None
     )
     return train_loader, val_loader
+
+
+def _loader_kwargs(train_cfg: dict) -> dict:
+    num_workers = int(train_cfg.get("num_workers", 0))
+    kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": bool(train_cfg.get("pin_memory", False)),
+    }
+    if num_workers > 0:
+        kwargs["persistent_workers"] = bool(train_cfg.get("persistent_workers", True))
+        kwargs["prefetch_factor"] = int(train_cfg.get("prefetch_factor", 2))
+    return kwargs
 
 
 def _filter_cached_ids(cell_ids: list[str], cache: LatentCacheStore) -> list[str]:
