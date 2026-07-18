@@ -228,7 +228,12 @@ class SeversonParser(BaseBatteryParser):
         output_dir: Path,
     ) -> tuple[list[CanonicalCell], list[CanonicalCycle]]:
         data = load_and_clean_raw_json(json_path)
-        return self._parse_beep_structure(data, output_dir, source_file=normalize_path(json_path))
+        return self._parse_beep_structure(
+            data,
+            output_dir,
+            source_file=normalize_path(json_path),
+            fallback_cell_id=json_path.stem.replace("_structure", ""),
+        )
 
     def _parse_json_zip(
         self,
