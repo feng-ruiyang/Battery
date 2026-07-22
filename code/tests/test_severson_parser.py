@@ -126,3 +126,38 @@ def test_severson_parser_uses_raw_json_cleaning_hook(tmp_path, monkeypatch):
 
     cells = read_jsonl(out_dir / "cells.jsonl")
     assert cells[0]["barcode"] == "after-cleaning"
+
+
+def test_severson_parser_saves_nonfinite_json_arrays_as_float_nan(tmp_path):
+    raw_dir = tmp_path / "raw"
+    out_dir = tmp_path / "processed"
+    raw_dir.mkdir()
+    data = {
+        "barcode": "cell-with-nonfinite",
+        "summary": {
+            "cycle_index": [0],
+            "discharge_capacity": [1.0],
+        },
+        "cycles_interpolated": {
+            "cycle_index": [0, 0, 0],
+            "voltage": [float("nan"), float("inf"), 3.2],
+            "current": [1.0, float("-inf"), 2.0],
+            "temperature": [25.0, None, 27.0],
+        },
+    }
+
+    import json
+
+    (raw_dir / "FastCharge_000000_CH25_structure.json").write_text(json.dumps(data))
+
+    parser = SeversonParser()
+    parser.parse(raw_dir, out_dir)
+
+    cycles = read_jsonl(out_dir / "cycles.jsonl")
+    with np.load(out_dir / cycles[0]["array_path"]) as arrays:
+        assert arrays["V"].dtype.kind == "f"
+        assert arrays["I"].dtype.kind == "f"
+        assert arrays["T"].dtype.kind == "f"
+        np.testing.assert_allclose(arrays["V"], [np.nan, np.nan, 3.2], equal_nan=True)
+        np.testing.assert_allclose(arrays["I"], [1.0, np.nan, 2.0], equal_nan=True)
+        np.testing.assert_allclose(arrays["T"], [25.0, np.nan, 27.0], equal_nan=True)

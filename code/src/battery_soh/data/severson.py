@@ -599,10 +599,30 @@ def _group_interpolated_cycles(interpolated: dict[str, Any]) -> dict[int, dict[s
         for canonical_name, json_name in JSON_ARRAY_ALIASES.items():
             if json_name not in interpolated:
                 continue
-            values = np.asarray(interpolated[json_name])
+            if canonical_name == "step_type":
+                values = np.asarray(interpolated[json_name])
+            else:
+                values = _numeric_array(interpolated[json_name])
             if values.shape[0] != cycle_ids.shape[0]:
                 continue
             arrays[canonical_name] = values[mask]
         arrays["point_index"] = np.arange(mask.sum(), dtype=np.int32)
         grouped[int(cycle_id)] = arrays
     return grouped
+
+
+def _numeric_array(values: Any) -> np.ndarray:
+    try:
+        array = np.asarray(values, dtype=float)
+    except (TypeError, ValueError):
+        raw = np.asarray(values, dtype=object).reshape(-1)
+        cleaned = []
+        for value in raw:
+            try:
+                cleaned.append(float(value))
+            except (TypeError, ValueError):
+                cleaned.append(np.nan)
+        array = np.asarray(cleaned, dtype=float)
+    array = np.asarray(array, dtype=float)
+    array[~np.isfinite(array)] = np.nan
+    return array

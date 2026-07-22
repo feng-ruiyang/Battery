@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -14,10 +15,24 @@ def load_and_clean_raw_json(json_path: str | Path) -> dict[str, Any]:
 
 
 def clean_raw_json(json_path: str | Path, data: dict[str, Any]) -> dict[str, Any]:
-    """Placeholder for raw JSON cleaning.
+    """Normalize raw JSON values before dataset-specific parsing.
 
-    The implementation is intentionally empty for now. Future cleaning should keep
-    this function as the raw JSON boundary so parsers receive normalized data.
+    Some BEEP/Severson exports contain non-standard JSON constants such as NaN
+    and Infinity. Python's `json` module accepts them, but downstream JSONL
+    writers and numpy array serialization should receive regular JSON values.
     """
     _ = json_path
-    return data
+    cleaned = _replace_nonfinite(data)
+    if not isinstance(cleaned, dict):
+        raise TypeError(f"Expected raw JSON object after cleaning, got {type(cleaned)!r}.")
+    return cleaned
+
+
+def _replace_nonfinite(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, list):
+        return [_replace_nonfinite(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _replace_nonfinite(item) for key, item in value.items()}
+    return value

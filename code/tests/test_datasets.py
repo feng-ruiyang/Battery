@@ -3,6 +3,7 @@ import numpy as np
 from battery_soh.data.datasets import CanonicalCycleStore, SOHTrajectoryDataset
 from battery_soh.data.io import write_jsonl
 from battery_soh.data.schema import TrainingWindowSpec
+from battery_soh.data.transforms import fill_nonfinite_1d, resample_1d
 
 
 def test_soh_dataset_loads_curve_and_summary_windows(tmp_path):
@@ -82,3 +83,13 @@ def test_soh_dataset_marks_missing_curve_channels_as_nan(tmp_path):
     assert item.x_window is not None
     assert item.x_window.shape == (2, 2, 2)
     assert np.isnan(item.x_window[:, :, 1]).all()
+
+
+def test_resample_fills_nonfinite_edges_and_middle_gaps():
+    values = np.asarray([np.nan, np.inf, 2.0, np.nan, 6.0, -np.inf])
+
+    filled = fill_nonfinite_1d(values)
+    resampled = resample_1d(values, target_length=3)
+
+    np.testing.assert_allclose(filled, [2.0, 2.0, 2.0, 4.0, 6.0, 6.0])
+    np.testing.assert_allclose(resampled, [2.0, 3.0, 6.0])
