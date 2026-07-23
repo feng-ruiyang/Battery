@@ -21,6 +21,7 @@ train = [
   "torch",
   "lightning",
   "einops",
+  "matplotlib",
   "wandb",
 ]
 dev = [
@@ -34,4 +35,3 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-
