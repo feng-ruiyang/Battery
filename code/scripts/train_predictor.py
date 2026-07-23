@@ -20,6 +20,10 @@ from battery_soh.utils.seed import seed_everything
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train SoH trajectory predictor.")
     parser.add_argument("--config", type=Path, default=Path("configs/train_latent_tf_vbll.yaml"))
+    parser.add_argument("--processed-dir", type=Path, default=None)
+    parser.add_argument("--split-file", type=Path, default=None)
+    parser.add_argument("--latent-cache", type=Path, default=None)
+    parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -38,6 +42,8 @@ def build_model(cfg: dict) -> SOHProbabilisticPredictor:
     }
     if kind == "latent_tf_vbll":
         return SOHProbabilisticPredictor.vbll(**kwargs)
+    if kind == "latent_tf_deterministic":
+        return SOHProbabilisticPredictor.deterministic(**kwargs)
     if kind == "vbll_dynamics":
         return SOHProbabilisticPredictor.vbll(**kwargs)
     raise ValueError(f"Unsupported model kind: {kind}")
@@ -46,6 +52,14 @@ def build_model(cfg: dict) -> SOHProbabilisticPredictor:
 def main() -> None:
     args = parse_args()
     cfg = load_yaml(args.config)
+    if args.processed_dir is not None:
+        cfg.setdefault("data", {})["processed_dir"] = str(args.processed_dir)
+    if args.split_file is not None:
+        cfg.setdefault("data", {})["split_file"] = str(args.split_file)
+    if args.latent_cache is not None:
+        cfg.setdefault("data", {})["latent_cache"] = str(args.latent_cache)
+    if args.run_name is not None:
+        cfg.setdefault("experiment", {})["run_name"] = args.run_name
     seed_everything(int(cfg.get("experiment", {}).get("seed", 42)))
     device = resolve_device(cfg.get("training", {}).get("device", "auto"))
     model = build_model(cfg).to(device)

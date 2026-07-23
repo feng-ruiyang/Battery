@@ -53,7 +53,7 @@ def train_one_epoch(
             print(
                 f"{epoch_label}step={step_label} "
                 f"train_loss_running={running.get('loss', float('nan')):.6f} "
-                f"train_nll_running={running.get('nll', float('nan')):.6f} "
+                f"train_data_running={running.get('data_fit', float('nan')):.6f} "
                 f"train_state_running={running.get('latent_state', float('nan')):.6f} "
                 f"train_loss_epoch={epoch_metrics.get('loss', float('nan')):.6f}",
                 flush=True,

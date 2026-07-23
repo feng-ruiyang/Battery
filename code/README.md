@@ -71,6 +71,66 @@ outputs/<experiment>/runs/YYYYMMDD_HHMMSS/
 Set `experiment.timestamped_output: false` to restore fixed-path checkpoint
 behavior.
 
+## Encoder Checkpoint Matrix
+
+The deterministic predictor uses the same latent-state transformer and
+autoregressive trajectory decoder as the VBLL predictor, but replaces the VBLL
+output layer with a deterministic linear layer and trains the trajectory with
+masked MSE. Its default config is:
+
+```bash
+python scripts/train_predictor.py \
+  --config configs/train_latent_tf_deterministic.yaml
+```
+
+To compare encoder checkpoint selection independently from predictor type,
+first cache `best.pt` and `last.pt` separately:
+
+```bash
+python scripts/cache_latents.py \
+  --config configs/pretrain_encoder.yaml \
+  --checkpoint outputs/severson_cycle_autoencoder/runs/<encoder_run>/best.pt \
+  --output data/processed/severson/latent_cache/<encoder_run>/best/latents.npz
+
+python scripts/cache_latents.py \
+  --config configs/pretrain_encoder.yaml \
+  --checkpoint outputs/severson_cycle_autoencoder/runs/<encoder_run>/last.pt \
+  --output data/processed/severson/latent_cache/<encoder_run>/last/latents.npz
+```
+
+Run each predictor config against each cache with explicit run names:
+
+```bash
+python scripts/train_predictor.py \
+  --config configs/train_latent_tf_vbll.yaml \
+  --latent-cache data/processed/severson/latent_cache/<encoder_run>/best/latents.npz \
+  --run-name <encoder_run>_best
+
+python scripts/train_predictor.py \
+  --config configs/train_latent_tf_deterministic.yaml \
+  --latent-cache data/processed/severson/latent_cache/<encoder_run>/best/latents.npz \
+  --run-name <encoder_run>_best
+```
+
+Repeat the two commands with the `last` cache and `<encoder_run>_last`. Each
+predictor run still saves its own `best.pt` and `last.pt`; use predictor
+`best.pt` for the primary test-set comparison.
+
+The complete four-run matrix can also be executed sequentially:
+
+```bash
+python scripts/run_predictor_matrix.py \
+  --encoder-config configs/pretrain_encoder.yaml \
+  --encoder-run-dir outputs/severson_cycle_autoencoder/runs/<encoder_run> \
+  --processed-dir data/processed/severson \
+  --split-file data/processed/severson/splits/cell_random_seed_42.jsonl \
+  --cache-root data/processed/severson/latent_cache/<encoder_run>
+```
+
+Pass `--reuse-cache` when resuming after both latent cache files have already
+been generated. The script stops immediately if caching or any predictor run
+fails.
+
 ## Logging
 
 Training scripts write metrics to `metrics.csv` in each experiment output

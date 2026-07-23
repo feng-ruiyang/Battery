@@ -24,9 +24,13 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
         num_heads: int = 4,
         dim_feedforward: int = 512,
         dropout: float = 0.1,
+        head_kind: str = "vbll",
     ) -> None:
         super().__init__()
+        if head_kind not in {"vbll", "deterministic"}:
+            raise ValueError(f"Unsupported trajectory head kind: {head_kind!r}.")
         self.horizon = horizon
+        self.head_kind = head_kind
         self.soh_proj = nn.Linear(1, hidden_dim)
         self.state_proj = nn.Linear(state_dim, hidden_dim)
         self.positional = SinusoidalPositionalEncoding(hidden_dim)
@@ -40,7 +44,10 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
         )
         self.decoder = nn.TransformerDecoder(layer, num_layers=num_layers)
         self.norm = nn.LayerNorm(hidden_dim)
-        self.vbll_head = VBLLLinear(input_dim=hidden_dim, output_dim=1)
+        if head_kind == "vbll":
+            self.vbll_head = VBLLLinear(input_dim=hidden_dim, output_dim=1)
+        else:
+            self.deterministic_head = nn.Linear(hidden_dim, 1)
 
     def forward(self, state: Tensor, decoder_inputs: Tensor) -> dict[str, Tensor]:
         if decoder_inputs.shape[1] != self.horizon:
@@ -55,14 +62,20 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
         decoded = self.decoder(tgt=tgt, memory=memory, tgt_mask=causal_mask)
         decoded = self.norm(decoded)
         flat = decoded.reshape(-1, decoded.shape[-1])
-        step_dist = self.vbll_head(flat)
-        y_mean = step_dist["theta_mean"].reshape(decoded.shape[0], self.horizon)
-        y_var = step_dist["theta_var"].reshape(decoded.shape[0], self.horizon).clamp_min(1e-12)
+        if self.head_kind == "vbll":
+            step_dist = self.vbll_head(flat)
+            y_mean = step_dist["theta_mean"].reshape(decoded.shape[0], self.horizon)
+            y_var = step_dist["theta_var"].reshape(decoded.shape[0], self.horizon).clamp_min(1e-12)
+            kl = step_dist["kl"]
+        else:
+            y_mean = self.deterministic_head(flat).reshape(decoded.shape[0], self.horizon)
+            y_var = torch.zeros_like(y_mean)
+            kl = y_mean.new_tensor(0.0)
         return {
             "y_mean": y_mean,
             "y_var": y_var,
             "y_cov": torch.diag_embed(y_var),
-            "kl": step_dist["kl"],
+            "kl": kl,
             "decoder_state": decoded,
         }
 

@@ -63,19 +63,28 @@ def gaussian_trajectory_nll(
 def total_loss(outputs: dict[str, Any], batch: dict[str, Tensor], cfg: dict[str, Any]) -> dict[str, Tensor]:
     y_true = batch["soh_future"]
     mask = batch.get("mask")
-    nll = gaussian_trajectory_nll(y_true, outputs["y_mean"], outputs["y_cov"], mask=mask)
+    mse = masked_trajectory_mse(y_true, outputs["y_mean"], mask=mask)
+    objective = str(_deep_get(cfg, "training.objective", "nll"))
+    if objective == "nll":
+        data_fit = gaussian_trajectory_nll(y_true, outputs["y_mean"], outputs["y_cov"], mask=mask)
+        nll = data_fit.detach()
+    elif objective == "mse":
+        data_fit = mse
+        nll = mse.new_tensor(0.0)
+    else:
+        raise ValueError(f"Unsupported training objective: {objective!r}.")
     latent_state = latent_next_step_loss(outputs, batch)
-    kl = _as_tensor(outputs.get("kl", 0.0), nll)
+    kl = _as_tensor(outputs.get("kl", 0.0), data_fit)
     regularization = outputs.get("regularization", {})
-    negative_rate = _as_tensor(regularization.get("negative_rate", 0.0), nll)
-    smoothness = _as_tensor(regularization.get("smoothness", 0.0), nll)
+    negative_rate = _as_tensor(regularization.get("negative_rate", 0.0), data_fit)
+    smoothness = _as_tensor(regularization.get("smoothness", 0.0), data_fit)
 
     beta_kl = float(_deep_get(cfg, "training.beta_kl", 0.0))
     lambda_state = float(_deep_get(cfg, "training.lambda_state", 1.0))
     lambda_negative = float(_deep_get(cfg, "training.lambda_negative", 0.0))
     lambda_smooth = float(_deep_get(cfg, "training.lambda_smooth", 0.0))
     loss = (
-        nll
+        data_fit
         + lambda_state * latent_state
         + beta_kl * kl
         + lambda_negative * negative_rate
@@ -83,12 +92,27 @@ def total_loss(outputs: dict[str, Any], batch: dict[str, Tensor], cfg: dict[str,
     )
     return {
         "loss": loss,
-        "nll": nll.detach(),
+        "data_fit": data_fit.detach(),
+        "mse": mse.detach(),
+        "nll": nll,
         "latent_state": latent_state.detach(),
         "kl": kl.detach(),
         "negative_rate": negative_rate.detach(),
         "smoothness": smoothness.detach(),
     }
+
+
+def masked_trajectory_mse(
+    y_true: Tensor,
+    y_mean: Tensor,
+    mask: Tensor | None = None,
+) -> Tensor:
+    valid = torch.isfinite(y_true)
+    if mask is not None:
+        valid = valid & mask.to(dtype=torch.bool)
+    if not torch.any(valid):
+        return y_mean.sum() * 0.0
+    return (y_true[valid] - y_mean[valid]).pow(2).mean()
 
 
 def latent_next_step_loss(outputs: dict[str, Any], batch: dict[str, Tensor]) -> Tensor:

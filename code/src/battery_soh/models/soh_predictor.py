@@ -49,6 +49,30 @@ class SOHProbabilisticPredictor(nn.Module):
         )
         return cls(state_model=state_model, decoder=decoder)
 
+    @classmethod
+    def deterministic(
+        cls,
+        latent_dim: int,
+        aux_dim: int,
+        horizon: int,
+        num_basis: int | None = None,
+        history_dim: int = 256,
+        decoder_dim: int | None = None,
+    ) -> "SOHProbabilisticPredictor":
+        del num_basis
+        state_model = LatentStateTransformer(
+            latent_dim=latent_dim,
+            aux_dim=aux_dim,
+            hidden_dim=history_dim,
+        )
+        decoder = TeacherForcingTrajectoryDecoder(
+            state_dim=history_dim,
+            horizon=horizon,
+            hidden_dim=decoder_dim or history_dim,
+            head_kind="deterministic",
+        )
+        return cls(state_model=state_model, decoder=decoder)
+
     def forward(
         self,
         z_window: Tensor,
