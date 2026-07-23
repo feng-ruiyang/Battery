@@ -75,12 +75,13 @@ def maybe_init_wandb(cfg: dict[str, Any]):
     import wandb
 
     mode = "offline" if logging_cfg.get("offline", False) else "online"
+    experiment_cfg = cfg.get("experiment", {})
     return wandb.init(
         project=logging_cfg.get("project", "battery-soh-bnn"),
         entity=logging_cfg.get("entity"),
         group=logging_cfg.get("group"),
         tags=logging_cfg.get("tags"),
-        name=cfg.get("experiment", {}).get("name"),
+        name=experiment_cfg.get("run_name") or experiment_cfg.get("name"),
         config=cfg,
         mode=mode,
     )

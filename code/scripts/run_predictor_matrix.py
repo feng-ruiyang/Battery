@@ -73,7 +73,7 @@ def main() -> None:
             print(f"Reusing latent cache: {latent_cache}", flush=True)
 
         for variant_name, config in variants:
-            run_name = f"{run_prefix}_{checkpoint_name}"
+            run_name = f"{run_prefix}_{checkpoint_name}_{variant_name}"
             print(
                 f"Training {variant_name} with encoder checkpoint={checkpoint_name}",
                 flush=True,

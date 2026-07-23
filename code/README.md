@@ -104,12 +104,12 @@ Run each predictor config against each cache with explicit run names:
 python scripts/train_predictor.py \
   --config configs/train_latent_tf_vbll.yaml \
   --latent-cache data/processed/severson/latent_cache/<encoder_run>/best/latents.npz \
-  --run-name <encoder_run>_best
+  --run-name <encoder_run>_best_vbll
 
 python scripts/train_predictor.py \
   --config configs/train_latent_tf_deterministic.yaml \
   --latent-cache data/processed/severson/latent_cache/<encoder_run>/best/latents.npz \
-  --run-name <encoder_run>_best
+  --run-name <encoder_run>_best_deterministic
 ```
 
 Repeat the two commands with the `last` cache and `<encoder_run>_last`. Each
