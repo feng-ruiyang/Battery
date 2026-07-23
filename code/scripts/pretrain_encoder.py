@@ -14,6 +14,7 @@ from battery_soh.training.losses import reconstruction_loss
 from battery_soh.utils.config import load_yaml
 from battery_soh.utils.device import resolve_device
 from battery_soh.utils.logging import build_metric_logger
+from battery_soh.utils.runs import resolve_run_output_dir
 from battery_soh.utils.seed import seed_everything
 
 
@@ -64,7 +65,8 @@ def main() -> None:
             lr=float(train_cfg.get("lr", 1.0e-4)),
             weight_decay=float(train_cfg.get("weight_decay", 0.0)),
         )
-        output_dir = Path(cfg.get("experiment", {}).get("output_dir", "outputs/cycle_autoencoder"))
+        output_dir = resolve_run_output_dir(cfg, "outputs/cycle_autoencoder")
+        print(f"Output dir: {output_dir}", flush=True)
         logger = build_metric_logger(cfg, output_dir)
         best_val = float("inf")
         max_epochs = int(train_cfg.get("max_epochs", 1))

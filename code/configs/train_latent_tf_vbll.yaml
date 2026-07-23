@@ -2,6 +2,7 @@ experiment:
   name: severson_latent_tf_vbll
   seed: 42
   output_dir: outputs/severson_latent_tf_vbll
+  timestamped_output: true
 
 data:
   processed_dir: data/processed/severson

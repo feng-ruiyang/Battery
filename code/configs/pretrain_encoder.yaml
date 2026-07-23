@@ -2,6 +2,7 @@ experiment:
   name: severson_cycle_autoencoder
   seed: 42
   output_dir: outputs/severson_cycle_autoencoder
+  timestamped_output: true
 
 data:
   processed_dir: data/processed/severson

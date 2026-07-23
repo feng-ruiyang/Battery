@@ -2,6 +2,7 @@ experiment:
   name: severson_vbll_dynamics
   seed: 42
   output_dir: outputs/severson_vbll_dynamics
+  timestamped_output: true
 
 data:
   processed_dir: data/processed/severson
