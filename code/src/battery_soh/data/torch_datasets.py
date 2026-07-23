@@ -156,7 +156,7 @@ class LatentWindowDataset(Dataset):
     def __len__(self) -> int:
         return len(self.index)
 
-    def __getitem__(self, index: int) -> dict[str, Tensor]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         cell_id, start = self.index[index]
         rows = self.by_cell[cell_id]
         hist = slice(start, start + self.window)
@@ -173,6 +173,8 @@ class LatentWindowDataset(Dataset):
             "soh_future": _float_tensor(soh_future),
             "mask": torch.as_tensor(mask, dtype=torch.bool),
             "history_mask": torch.zeros((self.window,), dtype=torch.bool),
+            "cell_id": cell_id,
+            "forecast_cycle_index": int(rows["cycle_index"][start + self.window - 1]),
         }
         if self.summary_indices:
             batch["u_window"] = _float_tensor(rows["summaries"][hist][:, self.summary_indices])

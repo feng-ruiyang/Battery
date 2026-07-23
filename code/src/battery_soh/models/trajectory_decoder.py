@@ -55,12 +55,7 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
                 f"decoder_inputs length must equal horizon={self.horizon}, "
                 f"got {decoder_inputs.shape[1]}."
             )
-        tgt = self.soh_proj(decoder_inputs.unsqueeze(-1))
-        tgt = self.positional(tgt)
-        memory = self.state_proj(state).unsqueeze(1)
-        causal_mask = _causal_mask(self.horizon, decoder_inputs.device)
-        decoded = self.decoder(tgt=tgt, memory=memory, tgt_mask=causal_mask)
-        decoded = self.norm(decoded)
+        decoded = self._decode_prefix(state, decoder_inputs)
         flat = decoded.reshape(-1, decoded.shape[-1])
         if self.head_kind == "vbll":
             step_dist = self.vbll_head(flat)
@@ -87,21 +82,83 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
         num_samples: int,
         use_mean: bool = False,
     ) -> Tensor:
-        samples = []
-        for _ in range(num_samples):
-            trajectory = []
-            for step in range(self.horizon):
-                decoder_inputs = _pad_decoder_inputs(start_soh, trajectory, self.horizon)
-                dist = self.forward(state=state, decoder_inputs=decoder_inputs)
-                mean = dist["y_mean"][:, step]
-                var = dist["y_var"][:, step]
-                if use_mean:
-                    y_step = mean
-                else:
-                    y_step = mean + torch.randn_like(mean) * var.sqrt()
-                trajectory.append(y_step)
-            samples.append(torch.stack(trajectory, dim=1))
-        return torch.stack(samples, dim=0)
+        if num_samples <= 0:
+            raise ValueError("num_samples must be positive.")
+        sample_count = 1 if use_mean or self.head_kind == "deterministic" else num_samples
+        batch_size = state.shape[0]
+        repeated_state = (
+            state.unsqueeze(0)
+            .expand(sample_count, -1, -1)
+            .reshape(sample_count * batch_size, state.shape[-1])
+        )
+        prefix = (
+            start_soh.unsqueeze(0)
+            .expand(sample_count, -1)
+            .reshape(sample_count * batch_size, 1)
+        )
+        sampled_weight, sampled_bias = self._sample_output_parameters(
+            sample_count=sample_count,
+            batch_size=batch_size,
+            use_mean=use_mean,
+        )
+
+        trajectory = []
+        for _ in range(self.horizon):
+            decoded = self._decode_prefix(repeated_state, prefix)
+            features = decoded[:, -1]
+            y_step = (features * sampled_weight).sum(dim=-1) + sampled_bias
+            trajectory.append(y_step)
+            prefix = torch.cat([prefix, y_step.unsqueeze(-1)], dim=1)
+
+        samples = torch.stack(trajectory, dim=-1)
+        return samples.reshape(sample_count, batch_size, self.horizon)
+
+    def _decode_prefix(self, state: Tensor, decoder_inputs: Tensor) -> Tensor:
+        tgt = self.positional(self.soh_proj(decoder_inputs.unsqueeze(-1)))
+        memory = self.state_proj(state).unsqueeze(1)
+        causal_mask = _causal_mask(decoder_inputs.shape[1], decoder_inputs.device)
+        decoded = self.decoder(tgt=tgt, memory=memory, tgt_mask=causal_mask)
+        return self.norm(decoded)
+
+    def _sample_output_parameters(
+        self,
+        sample_count: int,
+        batch_size: int,
+        use_mean: bool,
+    ) -> tuple[Tensor, Tensor]:
+        if self.head_kind == "deterministic":
+            weight = self.deterministic_head.weight
+            bias = self.deterministic_head.bias
+        else:
+            weight = self.vbll_head.weight_mu
+            bias = self.vbll_head.bias_mu
+            if not use_mean:
+                weight_std = torch.nn.functional.softplus(self.vbll_head.weight_rho)
+                weight = weight.unsqueeze(0) + torch.randn(
+                    sample_count,
+                    *weight.shape,
+                    dtype=weight.dtype,
+                    device=weight.device,
+                ) * weight_std.unsqueeze(0)
+                if bias is not None and self.vbll_head.bias_rho is not None:
+                    bias_std = torch.nn.functional.softplus(self.vbll_head.bias_rho)
+                    bias = bias.unsqueeze(0) + torch.randn(
+                        sample_count,
+                        *bias.shape,
+                        dtype=bias.dtype,
+                        device=bias.device,
+                    ) * bias_std.unsqueeze(0)
+
+        if weight.ndim == 2:
+            weight = weight.unsqueeze(0)
+        weight = weight[:, 0].repeat_interleave(batch_size, dim=0)
+        if bias is None:
+            sampled_bias = weight.new_zeros(weight.shape[0])
+        else:
+            if bias.ndim == 1:
+                bias = bias.unsqueeze(0)
+            sampled_bias = bias[:, 0].repeat_interleave(batch_size, dim=0)
+        return weight, sampled_bias
 
 
 def make_teacher_forcing_inputs(soh_history: Tensor, soh_future: Tensor) -> Tensor:
@@ -112,16 +169,6 @@ def make_teacher_forcing_inputs(soh_history: Tensor, soh_future: Tensor) -> Tens
         return start
     future_prefix = torch.nan_to_num(soh_future[:, :-1], nan=0.0, posinf=0.0, neginf=0.0)
     return torch.cat([start, future_prefix], dim=1)
-
-
-def _pad_decoder_inputs(start_soh: Tensor, trajectory: list[Tensor], horizon: int) -> Tensor:
-    values = [start_soh.new_zeros(start_soh.shape) for _ in range(horizon)]
-    values[0] = start_soh
-    for i, value in enumerate(trajectory, start=1):
-        if i >= horizon:
-            break
-        values[i] = value
-    return torch.stack(values, dim=1)
 
 
 def _causal_mask(length: int, device: torch.device) -> Tensor:

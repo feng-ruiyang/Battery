@@ -29,6 +29,49 @@ def test_deterministic_decoder_returns_zero_predictive_variance() -> None:
     assert outputs["kl"].item() == 0.0
 
 
+def test_vbll_rollout_samples_fixed_weights_in_parallel() -> None:
+    decoder = TeacherForcingTrajectoryDecoder(
+        state_dim=8,
+        horizon=4,
+        hidden_dim=8,
+        num_layers=1,
+        num_heads=2,
+        dim_feedforward=16,
+        dropout=0.0,
+        head_kind="vbll",
+    )
+    decoder.eval()
+    samples = decoder.sample(
+        state=torch.randn(2, 8),
+        start_soh=torch.ones(2),
+        num_samples=3,
+    )
+
+    assert samples.shape == (3, 2, 4)
+    assert not torch.equal(samples[0], samples[1])
+
+
+def test_deterministic_rollout_uses_single_mean_trajectory() -> None:
+    decoder = TeacherForcingTrajectoryDecoder(
+        state_dim=8,
+        horizon=4,
+        hidden_dim=8,
+        num_layers=1,
+        num_heads=2,
+        dim_feedforward=16,
+        dropout=0.0,
+        head_kind="deterministic",
+    )
+    decoder.eval()
+    samples = decoder.sample(
+        state=torch.randn(2, 8),
+        start_soh=torch.ones(2),
+        num_samples=3,
+    )
+
+    assert samples.shape == (1, 2, 4)
+
+
 def test_deterministic_predictor_uses_shared_backbone_shapes() -> None:
     model = SOHProbabilisticPredictor.deterministic(
         latent_dim=4,

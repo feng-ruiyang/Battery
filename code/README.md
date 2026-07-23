@@ -131,6 +131,32 @@ Pass `--reuse-cache` when resuming after both latent cache files have already
 been generated. The script stops immediately if caching or any predictor run
 fails.
 
+## Free-Running Rollout Evaluation
+
+Evaluate a predictor checkpoint without teacher forcing:
+
+```bash
+python scripts/evaluate.py \
+  --checkpoint outputs/severson_latent_tf_vbll/runs/<run_name>/best.pt \
+  --split test \
+  --num-samples 32 \
+  --batch-size 8
+```
+
+For VBLL, one last-layer weight sample is held fixed along each complete
+autoregressive trajectory. Deterministic checkpoints produce one mean
+trajectory. The evaluator writes:
+
+- overall and macro-cell MAE/RMSE;
+- MAE/RMSE at horizons 1, 5, 10, 20, 50, and 80;
+- VBLL empirical CRPS, interval coverage, interval width, and predictive
+  standard deviation;
+- `metrics.json` and compressed rollout summaries in `predictions.npz`.
+
+Use `--max-windows 128` for a smoke test before evaluating every test window.
+Add `--save-samples` only when the full sample tensor is needed because it can
+be large.
+
 ## Logging
 
 Training scripts write metrics to `metrics.csv` in each experiment output
