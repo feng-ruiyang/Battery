@@ -3,7 +3,7 @@ import numpy as np
 from battery_soh.data.datasets import CanonicalCycleStore, SOHTrajectoryDataset
 from battery_soh.data.io import write_jsonl
 from battery_soh.data.schema import TrainingWindowSpec
-from battery_soh.data.transforms import fill_nonfinite_1d, resample_1d
+from battery_soh.data.transforms import fill_nonfinite_1d, resample_1d, stack_cycle_channels
 
 
 def test_soh_dataset_loads_curve_and_summary_windows(tmp_path):
@@ -93,3 +93,21 @@ def test_resample_fills_nonfinite_edges_and_middle_gaps():
 
     np.testing.assert_allclose(filled, [2.0, 2.0, 2.0, 4.0, 6.0, 6.0])
     np.testing.assert_allclose(resampled, [2.0, 3.0, 6.0])
+
+
+def test_stack_cycle_channels_fills_only_wholly_missing_channels():
+    arrays = {
+        "V": np.asarray([3.0, np.nan, 3.4]),
+        "T": np.asarray([np.nan, np.inf]),
+    }
+
+    stacked = stack_cycle_channels(
+        arrays,
+        channels=("V", "I", "T"),
+        length=3,
+        fill_values={"I": 2.0, "T": 33.5},
+    )
+
+    np.testing.assert_allclose(stacked[:, 0], [3.0, 3.2, 3.4])
+    np.testing.assert_allclose(stacked[:, 1], [2.0, 2.0, 2.0])
+    np.testing.assert_allclose(stacked[:, 2], [33.5, 33.5, 33.5])

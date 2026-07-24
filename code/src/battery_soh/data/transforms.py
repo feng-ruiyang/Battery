@@ -29,12 +29,22 @@ def resample_1d(values: np.ndarray, target_length: int) -> np.ndarray:
     return np.interp(dst, src, values)
 
 
-def stack_cycle_channels(arrays: dict[str, np.ndarray], channels: tuple[str, ...], length: int) -> np.ndarray:
+def stack_cycle_channels(
+    arrays: dict[str, np.ndarray],
+    channels: tuple[str, ...],
+    length: int,
+    fill_values: dict[str, float] | None = None,
+) -> np.ndarray:
+    fill_values = fill_values or {}
     stacked = []
     for name in channels:
         values = arrays.get(name)
         if values is None:
-            stacked.append(np.full((length,), np.nan, dtype=float))
+            fill = fill_values.get(name, np.nan)
+            stacked.append(np.full((length,), fill, dtype=float))
         else:
-            stacked.append(resample_1d(values, length))
+            resampled = resample_1d(values, length)
+            if not np.any(np.isfinite(resampled)) and name in fill_values:
+                resampled = np.full((length,), fill_values[name], dtype=float)
+            stacked.append(resampled)
     return np.stack(stacked, axis=-1)

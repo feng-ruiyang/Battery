@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from battery_soh.data.hust import HustParser
 from battery_soh.data.severson import DEFAULT_CYCLE_ARRAYS, SeversonParser
 from battery_soh.utils.config import load_yaml
 
@@ -23,16 +24,23 @@ def main() -> None:
     args = parse_args()
     cfg = load_yaml(args.config) if args.config else {}
     dataset = args.dataset or cfg.get("dataset")
-    raw_dir = args.raw_dir or Path(cfg.get("raw_dir", "data/raw/severson"))
-    output_dir = args.output_dir or Path(cfg.get("output_dir", "data/processed/severson"))
-
-    if dataset != "severson":
-        raise ValueError(f"Unsupported dataset {dataset!r}. Currently supported: 'severson'.")
-
-    include_arrays = tuple(cfg.get("include_arrays", DEFAULT_CYCLE_ARRAYS))
-    split_seed = int(cfg.get("splits", {}).get("seed", 42))
+    raw_dir = args.raw_dir or Path(cfg.get("raw_dir", f"data/raw/{dataset}"))
+    output_dir = args.output_dir or Path(cfg.get("output_dir", f"data/processed/{dataset}"))
     max_cells = args.max_cells if args.max_cells is not None else cfg.get("max_cells")
-    parser = SeversonParser(include_arrays=include_arrays, split_seed=split_seed, max_cells=max_cells)
+    if dataset == "severson":
+        include_arrays = tuple(cfg.get("include_arrays", DEFAULT_CYCLE_ARRAYS))
+        split_seed = int(cfg.get("splits", {}).get("seed", 42))
+        parser = SeversonParser(
+            include_arrays=include_arrays,
+            split_seed=split_seed,
+            max_cells=max_cells,
+        )
+    elif dataset == "hust":
+        parser = HustParser(max_cells=max_cells)
+    else:
+        raise ValueError(
+            f"Unsupported dataset {dataset!r}. Currently supported: 'severson', 'hust'."
+        )
 
     scan = parser.scan(raw_dir)
     print(json.dumps(scan.__dict__, ensure_ascii=False, indent=2))

@@ -33,6 +33,42 @@ The parser writes:
 - `arrays/<cell_id>/cycle_<index>.npz`: variable-length cycle arrays.
   The `.npz` files can contain fields such as `I`, `V`, `T`, `Qc`, `Qd`, `Qdlin`, `Tdlin`, `dQdV`, and `t`.
 
+## HUST Zero-Shot Preprocess
+
+BatteryLife standardized HUST pickle files can be converted to the same
+canonical representation without training on HUST:
+
+```bash
+PYTHONPATH=src python scripts/preprocess.py \
+  --dataset hust \
+  --raw-dir ~/data/hust/raw \
+  --output-dir ~/data/hust/processed
+```
+
+The parser preserves the missing HUST temperature channel and places every cell
+in `splits/all_external_test.jsonl`. Create two caches with the frozen Severson
+encoder. The first retains the existing missing-channel behavior (`T=0`):
+
+```bash
+PYTHONPATH=src python scripts/cache_latents.py \
+  --config configs/pretrain_encoder_server.yaml \
+  --checkpoint outputs/severson_cycle_autoencoder/runs/<encoder_run>/best.pt \
+  --processed-dir ~/data/hust/processed \
+  --output ~/data/hust/latents_t_zero.npz
+```
+
+The second fills only the wholly missing temperature channel with the Severson
+training mean reported by `audit_hust_compatibility.py`:
+
+```bash
+PYTHONPATH=src python scripts/cache_latents.py \
+  --config configs/pretrain_encoder_server.yaml \
+  --checkpoint outputs/severson_cycle_autoencoder/runs/<encoder_run>/best.pt \
+  --processed-dir ~/data/hust/processed \
+  --channel-fill T=33.698144901739695 \
+  --output ~/data/hust/latents_t_severson_mean.npz
+```
+
 ## Model Dry Runs
 
 The model code can be shape-checked before the real latent cache exists:

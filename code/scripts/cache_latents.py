@@ -24,7 +24,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Cache cycle latent vectors from a trained encoder.")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument(
+        "--processed-dir",
+        type=Path,
+        default=None,
+        help="Override config data.processed_dir for zero-shot external data.",
+    )
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--channel-fill",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="Fill a wholly missing cycle channel before encoding; repeat as needed.",
+    )
     return parser.parse_args()
 
 
@@ -40,13 +53,20 @@ def main() -> None:
     print(f"Loaded checkpoint: {args.checkpoint}", flush=True)
     print(f"Device: {device}", flush=True)
 
-    store = CanonicalCycleStore(data_cfg["processed_dir"])
+    processed_dir = args.processed_dir or Path(data_cfg["processed_dir"])
+    store = CanonicalCycleStore(processed_dir)
     cell_ids = resolve_cell_ids(store)
+    channel_fill_values = {
+        str(name): float(value)
+        for name, value in data_cfg.get("channel_fill_values", {}).items()
+    }
+    channel_fill_values.update(_parse_channel_fills(args.channel_fill))
     dataset = CycleTensorDataset(
         store=store,
         cell_ids=cell_ids,
         channels=tuple(data_cfg.get("channels", ("V", "I", "T"))),
         sequence_length=int(data_cfg.get("sequence_length", 1000)),
+        channel_fill_values=channel_fill_values,
     )
     if len(dataset) == 0:
         raise SystemExit("No cycles found to encode. Run preprocessing first and check processed_dir.")
@@ -54,7 +74,8 @@ def main() -> None:
     batch_size = int(train_cfg.get("batch_size", 128))
     print(
         f"Latent cache DataLoader: cycles={len(dataset)}, batch_size={batch_size}, "
-        f"num_workers={loader_kwargs['num_workers']}, pin_memory={loader_kwargs['pin_memory']}",
+        f"num_workers={loader_kwargs['num_workers']}, pin_memory={loader_kwargs['pin_memory']}, "
+        f"channel_fill_values={channel_fill_values}",
         flush=True,
     )
     loader = DataLoader(
@@ -96,7 +117,12 @@ def main() -> None:
                     flush=True,
                 )
 
-    output = args.output or Path(data_cfg.get("latent_cache", Path(data_cfg["processed_dir"]) / "latents.npz"))
+    if args.output is not None:
+        output = args.output
+    elif args.processed_dir is not None:
+        output = processed_dir / "latents.npz"
+    else:
+        output = Path(data_cfg.get("latent_cache", processed_dir / "latents.npz"))
     save_latent_cache(
         output,
         z=np.concatenate(z_batches, axis=0),
@@ -117,6 +143,19 @@ def _loader_kwargs(train_cfg: dict) -> dict:
         kwargs["persistent_workers"] = bool(train_cfg.get("persistent_workers", True))
         kwargs["prefetch_factor"] = int(train_cfg.get("prefetch_factor", 2))
     return kwargs
+
+
+def _parse_channel_fills(values: list[str]) -> dict[str, float]:
+    result: dict[str, float] = {}
+    for item in values:
+        if "=" not in item:
+            raise ValueError(f"Expected --channel-fill NAME=VALUE, got {item!r}.")
+        name, raw_value = item.split("=", 1)
+        name = name.strip()
+        if not name:
+            raise ValueError(f"Channel name must not be empty: {item!r}.")
+        result[name] = float(raw_value)
+    return result
 
 
 def build_autoencoder(cfg: dict) -> CycleAutoencoder:

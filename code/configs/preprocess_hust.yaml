@@ -1,0 +1,4 @@
+dataset: hust
+raw_dir: data/raw/hust
+output_dir: data/processed/hust
+max_cells: null

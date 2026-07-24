@@ -44,10 +44,12 @@ class CycleTensorDataset(Dataset):
         cell_ids: list[str],
         channels: tuple[str, ...],
         sequence_length: int,
+        channel_fill_values: dict[str, float] | None = None,
     ) -> None:
         self.store = store
         self.channels = channels
         self.sequence_length = sequence_length
+        self.channel_fill_values = channel_fill_values or {}
         self.rows: list[dict[str, Any]] = []
         for cell_id in cell_ids:
             for row in store.cycles_for_cell(cell_id):
@@ -60,7 +62,12 @@ class CycleTensorDataset(Dataset):
     def __getitem__(self, index: int) -> dict[str, Any]:
         row = self.rows[index]
         arrays = self.store.load_cycle_arrays(row)
-        x_cycle = stack_cycle_channels(arrays, self.channels, self.sequence_length)
+        x_cycle = stack_cycle_channels(
+            arrays,
+            self.channels,
+            self.sequence_length,
+            fill_values=self.channel_fill_values,
+        )
         return {
             "x_cycle": _float_tensor(x_cycle),
             "cell_id": row["cell_id"],
