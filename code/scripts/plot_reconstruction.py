@@ -12,6 +12,7 @@ import numpy as np
 import torch
 
 from battery_soh.data.datasets import CanonicalCycleStore
+from battery_soh.data.normalization import load_channel_normalizer
 from battery_soh.data.torch_datasets import CycleTensorDataset, resolve_cell_ids
 from battery_soh.training.checkpointing import load_checkpoint
 from battery_soh.utils.config import load_yaml
@@ -41,13 +42,16 @@ def main() -> None:
     model.eval()
 
     store = CanonicalCycleStore(data_cfg["processed_dir"])
+    channels = tuple(data_cfg.get("channels", ("V", "I", "T")))
+    normalizer = load_channel_normalizer(data_cfg.get("normalizer"))
     split_file = data_cfg.get("split_file")
     cell_ids = resolve_cell_ids(store, split_file, args.split) if args.split != "all" else resolve_cell_ids(store)
     dataset = CycleTensorDataset(
         store=store,
         cell_ids=cell_ids,
-        channels=tuple(data_cfg.get("channels", ("V", "I", "T"))),
+        channels=channels,
         sequence_length=int(data_cfg.get("sequence_length", 1000)),
+        normalizer=normalizer,
     )
     if len(dataset) == 0:
         raise SystemExit(f"No cycles found for split={args.split!r}.")
@@ -65,13 +69,16 @@ def main() -> None:
         with torch.no_grad():
             recon = model(x)["x_recon"].squeeze(0).cpu().numpy()
         original = x.squeeze(0).cpu().numpy()
+        if normalizer is not None:
+            recon = normalizer.denormalize(recon, channels)
+            original = normalizer.denormalize(original, channels)
         out_path = args.output_dir / (
             f"{item['cell_id']}_cycle_{int(item['cycle_index']):05d}_reconstruction.png"
         )
         plot_cycle_reconstruction(
             original=original,
             reconstruction=recon,
-            channels=tuple(data_cfg.get("channels", ("V", "I", "T"))),
+            channels=channels,
             title=f"{item['cell_id']} cycle {int(item['cycle_index'])}",
             output_path=out_path,
         )

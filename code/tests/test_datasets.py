@@ -2,7 +2,9 @@ import numpy as np
 
 from battery_soh.data.datasets import CanonicalCycleStore, SOHTrajectoryDataset
 from battery_soh.data.io import write_jsonl
+from battery_soh.data.normalization import ChannelNormalizer
 from battery_soh.data.schema import TrainingWindowSpec
+from battery_soh.data.torch_datasets import CycleTensorDataset
 from battery_soh.data.transforms import fill_nonfinite_1d, resample_1d, stack_cycle_channels
 
 
@@ -111,3 +113,45 @@ def test_stack_cycle_channels_fills_only_wholly_missing_channels():
     np.testing.assert_allclose(stacked[:, 0], [3.0, 3.2, 3.4])
     np.testing.assert_allclose(stacked[:, 1], [2.0, 2.0, 2.0])
     np.testing.assert_allclose(stacked[:, 2], [33.5, 33.5, 33.5])
+
+
+def test_cycle_tensor_dataset_applies_channel_normalization(tmp_path):
+    processed = tmp_path / "processed"
+    array_path = processed / "arrays" / "cell_a" / "cycle_00001.npz"
+    array_path.parent.mkdir(parents=True)
+    np.savez(
+        array_path,
+        V=np.asarray([2.0, 4.0]),
+        I=np.asarray([-2.0, 2.0]),
+        T=np.asarray([20.0, 40.0]),
+    )
+    write_jsonl(processed / "cells.jsonl", [{"dataset_id": "test", "cell_id": "cell_a"}])
+    write_jsonl(
+        processed / "cycles.jsonl",
+        [
+            {
+                "dataset_id": "test",
+                "cell_id": "cell_a",
+                "cycle_index": 1,
+                "array_path": "arrays/cell_a/cycle_00001.npz",
+                "soh": 1.0,
+            }
+        ],
+    )
+    normalizer = ChannelNormalizer(
+        channels=("V", "I", "T"),
+        mean=np.asarray([3.0, 0.0, 30.0]),
+        std=np.asarray([1.0, 2.0, 10.0]),
+        count=np.asarray([2, 2, 2]),
+        metadata={},
+    )
+
+    dataset = CycleTensorDataset(
+        CanonicalCycleStore(processed),
+        ["cell_a"],
+        ("V", "I", "T"),
+        sequence_length=2,
+        normalizer=normalizer,
+    )
+
+    np.testing.assert_allclose(dataset[0]["x_cycle"].numpy(), [[-1, -1, -1], [1, 1, 1]])

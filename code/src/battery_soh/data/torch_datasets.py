@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 
 from battery_soh.data.datasets import CanonicalCycleStore
 from battery_soh.data.io import read_jsonl
+from battery_soh.data.normalization import ChannelNormalizer
 from battery_soh.data.transforms import stack_cycle_channels
 
 
@@ -45,11 +46,13 @@ class CycleTensorDataset(Dataset):
         channels: tuple[str, ...],
         sequence_length: int,
         channel_fill_values: dict[str, float] | None = None,
+        normalizer: ChannelNormalizer | None = None,
     ) -> None:
         self.store = store
         self.channels = channels
         self.sequence_length = sequence_length
         self.channel_fill_values = channel_fill_values or {}
+        self.normalizer = normalizer
         self.rows: list[dict[str, Any]] = []
         for cell_id in cell_ids:
             for row in store.cycles_for_cell(cell_id):
@@ -68,6 +71,8 @@ class CycleTensorDataset(Dataset):
             self.sequence_length,
             fill_values=self.channel_fill_values,
         )
+        if self.normalizer is not None:
+            x_cycle = self.normalizer.normalize(x_cycle, self.channels)
         return {
             "x_cycle": _float_tensor(x_cycle),
             "cell_id": row["cell_id"],

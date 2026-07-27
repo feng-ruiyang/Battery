@@ -132,6 +132,14 @@ Then train the NASA autoencoder, cache all cell latents with its best encoder,
 and train the NASA predictor:
 
 ```bash
+PYTHONPATH=src python scripts/fit_channel_normalizer.py \
+  --processed-dir ~/data/nasa/processed \
+  --split-file ~/data/nasa/processed/splits/cell_random_seed_42.jsonl \
+  --split train \
+  --channels V I T \
+  --sequence-length 1000 \
+  --output ~/data/nasa/processed/normalization/train_vit_seed_42.json
+
 PYTHONPATH=src python scripts/pretrain_encoder.py \
   --config configs/pretrain_encoder_nasa.yaml
 

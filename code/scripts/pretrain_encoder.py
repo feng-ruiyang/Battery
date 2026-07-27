@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
 from battery_soh.data.datasets import CanonicalCycleStore
+from battery_soh.data.normalization import load_channel_normalizer
 from battery_soh.data.torch_datasets import CycleTensorDataset, collate_cycle_batch, resolve_cell_ids
 from battery_soh.models.encoder_decoder import CycleAutoencoder, CycleDecoder, CycleEncoder
 from battery_soh.training.checkpointing import save_checkpoint
@@ -72,8 +74,16 @@ def main() -> None:
         max_epochs = int(train_cfg.get("max_epochs", 1))
         try:
             for epoch in range(1, max_epochs + 1):
-                train_loss = train_one_epoch(autoencoder, train_loader, optimizer, device, train_cfg, epoch)
-                val_loss = evaluate(autoencoder, val_loader, device) if val_loader is not None else train_loss
+                train_result = train_one_epoch(
+                    autoencoder, train_loader, optimizer, device, train_cfg, epoch, channels
+                )
+                val_result = (
+                    evaluate(autoencoder, val_loader, device, channels)
+                    if val_loader is not None
+                    else train_result
+                )
+                train_loss = train_result["loss"]
+                val_loss = val_result["loss"]
                 is_best = val_loss <= best_val
                 if is_best:
                     best_val = val_loss
@@ -81,6 +91,14 @@ def main() -> None:
                     "epoch": epoch,
                     "train/reconstruction_loss": train_loss,
                     "val/reconstruction_loss": val_loss,
+                    **{
+                        f"train/reconstruction_mse_{channel}": train_result[f"mse_{channel}"]
+                        for channel in channels
+                    },
+                    **{
+                        f"val/reconstruction_mse_{channel}": val_result[f"mse_{channel}"]
+                        for channel in channels
+                    },
                     "best/val_reconstruction_loss": best_val,
                     "train/num_cycles": len(train_loader.dataset),
                     "val/num_cycles": len(val_loader.dataset) if val_loader is not None else 0,
@@ -121,8 +139,21 @@ def build_dataloaders(cfg: dict) -> tuple[DataLoader, DataLoader | None]:
     val_ids = resolve_cell_ids(store, split_file, "val") if split_file else []
     channels = tuple(data_cfg.get("channels", ("V", "I", "T")))
     sequence_length = int(data_cfg.get("sequence_length", 1000))
-    train_dataset = CycleTensorDataset(store, train_ids, channels, sequence_length)
-    val_dataset = CycleTensorDataset(store, val_ids, channels, sequence_length) if val_ids else None
+    normalizer = load_channel_normalizer(data_cfg.get("normalizer"))
+    if normalizer is not None:
+        print(
+            f"Channel normalizer: {Path(data_cfg['normalizer']).expanduser()} "
+            f"mean={normalizer.mean.tolist()} std={normalizer.std.tolist()}",
+            flush=True,
+        )
+    train_dataset = CycleTensorDataset(
+        store, train_ids, channels, sequence_length, normalizer=normalizer
+    )
+    val_dataset = (
+        CycleTensorDataset(store, val_ids, channels, sequence_length, normalizer=normalizer)
+        if val_ids
+        else None
+    )
     batch_size = int(train_cfg.get("batch_size", 128))
     loader_kwargs = _loader_kwargs(train_cfg)
     print(
@@ -172,13 +203,15 @@ def train_one_epoch(
     device: torch.device,
     train_cfg: dict,
     epoch: int,
-) -> float:
+    channels: tuple[str, ...],
+) -> dict[str, float]:
     model.train()
     total = 0.0
     count = 0
     log_every = int(train_cfg.get("log_every_n_steps", 0))
     running_total = 0.0
     running_count = 0
+    channel_totals = np.zeros((len(channels),), dtype=float)
     for step, batch in enumerate(dataloader, start=1):
         x_cycle = batch["x_cycle"].to(device, non_blocking=True)
         outputs = model(x_cycle)
@@ -187,10 +220,14 @@ def train_one_epoch(
         loss.backward()
         optimizer.step()
         loss_value = float(loss.detach().cpu())
+        channel_mse = (
+            (outputs["x_recon"] - x_cycle).pow(2).mean(dim=(0, 1)).detach().cpu().numpy()
+        )
         total += loss_value
         count += 1
         running_total += loss_value
         running_count += 1
+        channel_totals += channel_mse
         if log_every > 0 and (step == 1 or step % log_every == 0 or step == len(dataloader)):
             running_loss = running_total / max(running_count, 1)
             epoch_loss = total / max(count, 1)
@@ -201,21 +238,38 @@ def train_one_epoch(
             )
             running_total = 0.0
             running_count = 0
-    return total / max(count, 1)
+    result = {"loss": total / max(count, 1)}
+    result.update(
+        {f"mse_{channel}": float(channel_totals[index] / max(count, 1)) for index, channel in enumerate(channels)}
+    )
+    return result
 
 
 @torch.no_grad()
-def evaluate(model: CycleAutoencoder, dataloader: DataLoader, device: torch.device) -> float:
+def evaluate(
+    model: CycleAutoencoder,
+    dataloader: DataLoader,
+    device: torch.device,
+    channels: tuple[str, ...],
+) -> dict[str, float]:
     model.eval()
     total = 0.0
     count = 0
+    channel_totals = np.zeros((len(channels),), dtype=float)
     for batch in dataloader:
         x_cycle = batch["x_cycle"].to(device, non_blocking=True)
         outputs = model(x_cycle)
         loss = reconstruction_loss(outputs["x_recon"], x_cycle)
         total += float(loss.detach().cpu())
+        channel_totals += (
+            (outputs["x_recon"] - x_cycle).pow(2).mean(dim=(0, 1)).detach().cpu().numpy()
+        )
         count += 1
-    return total / max(count, 1)
+    result = {"loss": total / max(count, 1)}
+    result.update(
+        {f"mse_{channel}": float(channel_totals[index] / max(count, 1)) for index, channel in enumerate(channels)}
+    )
+    return result
 
 
 if __name__ == "__main__":

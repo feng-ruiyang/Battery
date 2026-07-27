@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from battery_soh.data.datasets import CanonicalCycleStore
+from battery_soh.data.normalization import load_channel_normalizer
 from battery_soh.data.torch_datasets import (
     CycleTensorDataset,
     collate_cycle_batch,
@@ -61,12 +62,19 @@ def main() -> None:
         for name, value in data_cfg.get("channel_fill_values", {}).items()
     }
     channel_fill_values.update(_parse_channel_fills(args.channel_fill))
+    normalizer = load_channel_normalizer(data_cfg.get("normalizer"))
+    if normalizer is not None:
+        print(
+            f"Channel normalizer: {Path(data_cfg['normalizer']).expanduser()}",
+            flush=True,
+        )
     dataset = CycleTensorDataset(
         store=store,
         cell_ids=cell_ids,
         channels=tuple(data_cfg.get("channels", ("V", "I", "T"))),
         sequence_length=int(data_cfg.get("sequence_length", 1000)),
         channel_fill_values=channel_fill_values,
+        normalizer=normalizer,
     )
     if len(dataset) == 0:
         raise SystemExit("No cycles found to encode. Run preprocessing first and check processed_dir.")

@@ -8,6 +8,7 @@ data:
   processed_dir: ~/data/nasa/processed
   split_file: ~/data/nasa/processed/splits/cell_random_seed_42.jsonl
   latent_cache: ~/data/nasa/processed/latents.npz
+  normalizer: ~/data/nasa/processed/normalization/train_vit_seed_42.json
   channels:
     - V
     - I
