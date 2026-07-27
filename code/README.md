@@ -2,8 +2,8 @@
 
 This directory contains the implementation workspace for the BNN-Transformer battery SoH project.
 
-The current code supports Severson data ingestion, canonicalization, cycle encoder
-pretraining, latent caching, and latent-window SoH predictor training.
+The current code supports Severson, HUST, and NASA data ingestion, canonicalization,
+cycle encoder pretraining, latent caching, and latent-window SoH predictor training.
 
 ## Setup
 
@@ -68,6 +68,54 @@ PYTHONPATH=src python scripts/cache_latents.py \
   --channel-fill T=33.698144901739695 \
   --output ~/data/hust/latents_t_severson_mean.npz
 ```
+
+## NASA Zero-Shot Preprocess
+
+Extract the NASA archives into `~/data/nasa/raw`. Archives may remain under
+`~/data/nasa/extracted` for inventory reporting. Then run:
+
+```bash
+PYTHONPATH=src python scripts/preprocess.py \
+  --config configs/preprocess_nasa.yaml
+```
+
+All charge, discharge, and impedance operations are indexed in
+`operations.jsonl`, with their arrays under `operations/<cell_id>/`. Only
+discharge operations populate `cycles.jsonl` and therefore enter the current
+encoder and rollout experiment. For each cell, SoH is defined as:
+
+```text
+SoH_k = discharge Capacity_k / first discharge Capacity
+```
+
+Create NASA latents with the frozen Severson encoder:
+
+```bash
+PYTHONPATH=src python scripts/cache_latents.py \
+  --config configs/pretrain_encoder_server.yaml \
+  --checkpoint outputs/severson_cycle_autoencoder/runs/<encoder_run>/best.pt \
+  --processed-dir ~/data/nasa/processed \
+  --output ~/data/nasa/processed/latents.npz
+```
+
+Run a small rollout check before the complete 128-trajectory evaluation:
+
+```bash
+PYTHONPATH=src python scripts/evaluate.py \
+  --checkpoint outputs/severson_latent_tf_vbll/runs/<predictor_run>/best.pt \
+  --latent-cache ~/data/nasa/processed/latents.npz \
+  --split-file ~/data/nasa/processed/splits/all_external_test.jsonl \
+  --split test \
+  --num-samples 128 \
+  --batch-size 2 \
+  --max-windows 32 \
+  --output-dir outputs/nasa_rollout_smoke
+```
+
+Remove `--max-windows 32` and change the output directory for the complete run.
+Because the experiment encodes discharge segments only while the Severson encoder
+was trained on complete cycles, interpret it as a deliberately strong domain-shift
+test.
 
 ## Model Dry Runs
 

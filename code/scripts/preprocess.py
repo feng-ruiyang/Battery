@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from battery_soh.data.hust import HustParser
+from battery_soh.data.nasa import NasaParser
 from battery_soh.data.severson import DEFAULT_CYCLE_ARRAYS, SeversonParser
 from battery_soh.utils.config import load_yaml
 
@@ -24,8 +25,10 @@ def main() -> None:
     args = parse_args()
     cfg = load_yaml(args.config) if args.config else {}
     dataset = args.dataset or cfg.get("dataset")
-    raw_dir = args.raw_dir or Path(cfg.get("raw_dir", f"data/raw/{dataset}"))
-    output_dir = args.output_dir or Path(cfg.get("output_dir", f"data/processed/{dataset}"))
+    raw_dir = (args.raw_dir or Path(cfg.get("raw_dir", f"data/raw/{dataset}"))).expanduser()
+    output_dir = (
+        args.output_dir or Path(cfg.get("output_dir", f"data/processed/{dataset}"))
+    ).expanduser()
     max_cells = args.max_cells if args.max_cells is not None else cfg.get("max_cells")
     if dataset == "severson":
         include_arrays = tuple(cfg.get("include_arrays", DEFAULT_CYCLE_ARRAYS))
@@ -37,9 +40,16 @@ def main() -> None:
         )
     elif dataset == "hust":
         parser = HustParser(max_cells=max_cells)
+    elif dataset == "nasa":
+        archive_dir = cfg.get("archive_dir")
+        parser = NasaParser(
+            max_cells=max_cells,
+            archive_dir=Path(archive_dir) if archive_dir else None,
+        )
     else:
         raise ValueError(
-            f"Unsupported dataset {dataset!r}. Currently supported: 'severson', 'hust'."
+            f"Unsupported dataset {dataset!r}. "
+            "Currently supported: 'severson', 'hust', 'nasa'."
         )
 
     scan = parser.scan(raw_dir)

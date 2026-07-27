@@ -1,0 +1,5 @@
+dataset: nasa
+raw_dir: ~/data/nasa/raw
+archive_dir: ~/data/nasa/extracted
+output_dir: ~/data/nasa/processed
+max_cells: null
