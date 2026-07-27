@@ -306,7 +306,9 @@ def _operation_data(data: Any, operation_type: str) -> tuple[dict[str, np.ndarra
             arrays[target] = np.asarray(getattr(data, source), dtype=np.float64).reshape(-1)
 
     if operation_type == "discharge" and "Capacity" in fields:
-        scalars["capacity_ah"] = _finite_scalar_or_none(getattr(data, "Capacity"))
+        scalars["capacity_ah"] = _last_positive_finite_or_none(
+            getattr(data, "Capacity")
+        )
 
     known_fields = set(canonical_fields) | set(auxiliary_fields) | {"Capacity"}
     for field_name in sorted(fields - known_fields):
@@ -443,6 +445,14 @@ def _file_sha256(path: Path) -> str:
 def _positive_finite_or_none(value: Any) -> float | None:
     result = _finite_scalar_or_none(value)
     return result if result is not None and result > 0 else None
+
+
+def _last_positive_finite_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    array = np.asarray(value, dtype=float).reshape(-1)
+    finite_positive = array[np.isfinite(array) & (array > 0)]
+    return float(finite_positive[-1]) if len(finite_positive) else None
 
 
 def _finite_scalar_or_none(value: Any) -> float | None:

@@ -127,6 +127,32 @@ def test_nasa_parser_skips_byte_identical_duplicate_mat_files(tmp_path):
     )
 
 
+def test_nasa_parser_uses_last_positive_dq_when_capacity_is_an_array(tmp_path):
+    raw_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+    raw_dir.mkdir()
+    operations = np.empty(2, dtype=object)
+    operations[0] = _operation(
+        "discharge",
+        _discharge_data(np.asarray([0.0, 0.9, 1.8])),
+        second=0.0,
+    )
+    operations[1] = _operation(
+        "discharge",
+        _discharge_data(np.asarray([0.0, np.nan, 1.62])),
+        second=1.0,
+    )
+    savemat(raw_dir / "B0006.mat", {"B0006": {"cycle": operations}})
+
+    NasaParser().parse(raw_dir, output_dir)
+
+    cycles = read_jsonl(output_dir / "cycles.jsonl")
+    assert cycles[0]["q_discharge"] == 1.8
+    assert cycles[0]["soh"] == 1.0
+    assert cycles[1]["q_discharge"] == 1.62
+    assert cycles[1]["soh"] == 1.62 / 1.8
+
+
 def _write_battery(path):
     operations = np.empty(4, dtype=object)
     operations[0] = _operation("charge", _charge_data(), second=0.0)
