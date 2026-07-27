@@ -11,7 +11,7 @@ from battery_soh.data.datasets import CanonicalCycleStore
 from battery_soh.data.normalization import load_channel_normalizer
 from battery_soh.data.torch_datasets import CycleTensorDataset, collate_cycle_batch, resolve_cell_ids
 from battery_soh.models.encoder_decoder import CycleAutoencoder, CycleDecoder, CycleEncoder
-from battery_soh.training.checkpointing import save_checkpoint
+from battery_soh.training.checkpointing import load_checkpoint, save_checkpoint
 from battery_soh.training.losses import reconstruction_loss
 from battery_soh.utils.config import load_yaml
 from battery_soh.utils.device import resolve_device
@@ -23,6 +23,7 @@ from battery_soh.utils.seed import seed_everything
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Pretrain cycle encoder-decoder.")
     parser.add_argument("--config", type=Path, default=Path("configs/pretrain_encoder.yaml"))
+    parser.add_argument("--resume", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -67,13 +68,57 @@ def main() -> None:
             lr=float(train_cfg.get("lr", 1.0e-4)),
             weight_decay=float(train_cfg.get("weight_decay", 0.0)),
         )
-        output_dir = resolve_run_output_dir(cfg, "outputs/cycle_autoencoder")
+        scheduler = _build_scheduler(optimizer, train_cfg)
+        output_dir = (
+            args.resume.expanduser().resolve().parent
+            if args.resume is not None
+            else resolve_run_output_dir(cfg, "outputs/cycle_autoencoder")
+        )
         print(f"Output dir: {output_dir}", flush=True)
-        logger = build_metric_logger(cfg, output_dir)
         best_val = float("inf")
+        epochs_without_improvement = 0
+        start_epoch = 1
+        if args.resume is not None:
+            resume_path = args.resume.expanduser()
+            payload = load_checkpoint(
+                resume_path,
+                autoencoder,
+                optimizer=optimizer,
+                scheduler=scheduler,
+            )
+            start_epoch = int(payload.get("epoch") or 0) + 1
+            training_state = payload.get("training_state", {})
+            best_val = float(
+                training_state.get(
+                    "best_val",
+                    payload.get("metrics", {}).get("val_recon", float("inf")),
+                )
+            )
+            epochs_without_improvement = int(
+                training_state.get("epochs_without_improvement", 0)
+            )
+            resume_lr = train_cfg.get("resume_lr")
+            if resume_lr is not None:
+                for param_group in optimizer.param_groups:
+                    param_group["lr"] = float(resume_lr)
+            print(
+                f"Resumed checkpoint: {resume_path}; start_epoch={start_epoch}; "
+                f"best_val={best_val:.6f}; lr={optimizer.param_groups[0]['lr']:.6g}",
+                flush=True,
+            )
+        logger = build_metric_logger(cfg, output_dir)
         max_epochs = int(train_cfg.get("max_epochs", 1))
+        early_stopping_cfg = train_cfg.get("early_stopping", {})
+        early_stopping_enabled = bool(early_stopping_cfg.get("enabled", False))
+        early_stopping_patience = int(early_stopping_cfg.get("patience", 0))
+        early_stopping_min_delta = float(early_stopping_cfg.get("min_delta", 0.0))
+        if start_epoch > max_epochs:
+            raise ValueError(
+                f"Resume checkpoint starts at epoch {start_epoch}, "
+                f"but training.max_epochs={max_epochs}."
+            )
         try:
-            for epoch in range(1, max_epochs + 1):
+            for epoch in range(start_epoch, max_epochs + 1):
                 train_result = train_one_epoch(
                     autoencoder, train_loader, optimizer, device, train_cfg, epoch, channels
                 )
@@ -84,9 +129,20 @@ def main() -> None:
                 )
                 train_loss = train_result["loss"]
                 val_loss = val_result["loss"]
-                is_best = val_loss <= best_val
+                previous_best = best_val
+                is_best = val_loss < previous_best
+                meaningful_improvement = (
+                    val_loss < previous_best - early_stopping_min_delta
+                )
                 if is_best:
                     best_val = val_loss
+                if meaningful_improvement:
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
+                if scheduler is not None:
+                    scheduler.step(val_loss)
+                current_lr = float(optimizer.param_groups[0]["lr"])
                 metrics = {
                     "epoch": epoch,
                     "train/reconstruction_loss": train_loss,
@@ -103,11 +159,21 @@ def main() -> None:
                     "train/num_cycles": len(train_loader.dataset),
                     "val/num_cycles": len(val_loader.dataset) if val_loader is not None else 0,
                     "model/parameters": n_params,
-                    "optim/lr": float(train_cfg.get("lr", 1.0e-4)),
+                    "optim/lr": current_lr,
                     "checkpoint/is_best": int(is_best),
+                    "early_stopping/epochs_without_improvement": (
+                        epochs_without_improvement
+                    ),
                 }
                 logger.log(metrics)
-                print(f"epoch={epoch} train_recon={train_loss:.6f} val_recon={val_loss:.6f}")
+                print(
+                    f"epoch={epoch} train_recon={train_loss:.6f} "
+                    f"val_recon={val_loss:.6f} lr={current_lr:.6g}"
+                )
+                checkpoint_state = {
+                    "best_val": best_val,
+                    "epochs_without_improvement": epochs_without_improvement,
+                }
                 save_checkpoint(
                     output_dir / "last.pt",
                     autoencoder,
@@ -115,6 +181,8 @@ def main() -> None:
                     epoch=epoch,
                     metrics={"train_recon": train_loss, "val_recon": val_loss},
                     config=cfg,
+                    scheduler=scheduler,
+                    training_state=checkpoint_state,
                 )
                 if is_best:
                     save_checkpoint(
@@ -124,10 +192,44 @@ def main() -> None:
                         epoch=epoch,
                         metrics={"train_recon": train_loss, "val_recon": val_loss},
                         config=cfg,
+                        scheduler=scheduler,
+                        training_state=checkpoint_state,
                     )
+                if (
+                    early_stopping_enabled
+                    and early_stopping_patience > 0
+                    and epochs_without_improvement >= early_stopping_patience
+                ):
+                    print(
+                        f"Early stopping at epoch={epoch}: no validation improvement "
+                        f"for {epochs_without_improvement} epochs.",
+                        flush=True,
+                    )
+                    break
         finally:
             logger.close()
         print(f"Wrote checkpoints to {output_dir}")
+
+
+def _build_scheduler(
+    optimizer: torch.optim.Optimizer,
+    train_cfg: dict,
+) -> torch.optim.lr_scheduler.ReduceLROnPlateau | None:
+    scheduler_cfg = train_cfg.get("scheduler", {})
+    if not bool(scheduler_cfg.get("enabled", False)):
+        return None
+    scheduler_name = str(scheduler_cfg.get("name", "reduce_on_plateau"))
+    if scheduler_name != "reduce_on_plateau":
+        raise ValueError(f"Unsupported scheduler: {scheduler_name!r}.")
+    return torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=float(scheduler_cfg.get("factor", 0.5)),
+        patience=int(scheduler_cfg.get("patience", 4)),
+        threshold=float(scheduler_cfg.get("threshold", 1.0e-4)),
+        threshold_mode="abs",
+        min_lr=float(scheduler_cfg.get("min_lr", 1.0e-6)),
+    )
 
 
 def build_dataloaders(cfg: dict) -> tuple[DataLoader, DataLoader | None]:

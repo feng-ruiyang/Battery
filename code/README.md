@@ -151,6 +151,15 @@ PYTHONPATH=src python scripts/train_predictor.py \
   --config configs/train_latent_tf_vbll_nasa.yaml
 ```
 
+Resume a NASA autoencoder run from its best checkpoint while preserving the
+existing run directory:
+
+```bash
+PYTHONPATH=src python scripts/pretrain_encoder.py \
+  --config configs/pretrain_encoder_nasa.yaml \
+  --resume outputs/nasa_discharge_cycle_autoencoder/runs/<encoder_run>/best.pt
+```
+
 ## Model Dry Runs
 
 The model code can be shape-checked before the real latent cache exists:
