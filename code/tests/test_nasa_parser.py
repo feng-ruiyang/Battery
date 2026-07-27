@@ -153,6 +153,30 @@ def test_nasa_parser_uses_last_positive_dq_when_capacity_is_an_array(tmp_path):
     assert cycles[1]["soh"] == 1.62 / 1.8
 
 
+def test_nasa_parser_keeps_missing_capacity_discharge_only_as_operation(tmp_path):
+    raw_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+    raw_dir.mkdir()
+    operations = np.empty(3, dtype=object)
+    operations[0] = _operation("discharge", _discharge_data(1.8), second=0.0)
+    operations[1] = _operation("discharge", _discharge_data(np.nan), second=1.0)
+    operations[2] = _operation("discharge", _discharge_data(1.62), second=2.0)
+    savemat(raw_dir / "B0006.mat", {"B0006": {"cycle": operations}})
+
+    NasaParser().parse(raw_dir, output_dir)
+
+    cells = read_jsonl(output_dir / "cells.jsonl")
+    cycles = read_jsonl(output_dir / "cycles.jsonl")
+    parsed_operations = read_jsonl(output_dir / "operations.jsonl")
+
+    assert len(parsed_operations) == 3
+    assert parsed_operations[1]["capacity_ah"] is None
+    assert [cycle["cycle_index"] for cycle in cycles] == [1, 2]
+    assert [cycle["q_discharge"] for cycle in cycles] == [1.8, 1.62]
+    assert cycles[1]["metadata"]["raw_discharge_index"] == 3
+    assert cells[0]["metadata"]["num_discharge_operations_without_capacity"] == 1
+
+
 def _write_battery(path):
     operations = np.empty(4, dtype=object)
     operations[0] = _operation("charge", _charge_data(), second=0.0)

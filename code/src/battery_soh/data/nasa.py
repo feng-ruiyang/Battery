@@ -53,7 +53,8 @@ class NasaParser(BaseBatteryParser):
         )
         zip_count = sum(row["suffix"] == ".zip" for row in files)
         notes = [
-            "All NASA operations are indexed, but only discharge operations populate cycles.jsonl.",
+            "All NASA operations are indexed, but only discharge operations with "
+            "positive finite Capacity populate cycles.jsonl.",
             "Each cell's first discharge Capacity is the SoH denominator.",
             f"Found {raw_mat_count} MAT files under raw_dir, "
             f"{archive_mat_count} MAT files under archive_dir, and {zip_count} ZIP archives.",
@@ -237,26 +238,30 @@ class NasaParser(BaseBatteryParser):
             if operation["operation_type"] != MODEL_OPERATION_TYPE:
                 continue
             capacity = operation["capacity_ah"]
+            if capacity is None:
+                continue
             array_path = operation["array_path"]
             with np.load(output_dir / array_path, allow_pickle=False) as stored:
                 temperature_stats = _finite_stats(stored["T"] if "T" in stored else None)
-            discharge_index = int(operation["type_index"])
+            raw_discharge_index = int(operation["type_index"])
+            cycle_index = len(canonical_cycles) + 1
             canonical_cycles.append(
                 CanonicalCycle(
                     dataset_id=self.dataset_id,
                     cell_id=cell_id,
                     batch_id=batch_id,
-                    cycle_index=discharge_index,
+                    cycle_index=cycle_index,
                     array_path=array_path,
-                    cycle_number=float(discharge_index),
+                    cycle_number=float(cycle_index),
                     q_discharge=capacity,
                     t_min=temperature_stats["min"],
                     t_avg=temperature_stats["mean"],
                     t_max=temperature_stats["max"],
-                    soh=(capacity / initial_capacity) if capacity is not None else None,
+                    soh=capacity / initial_capacity,
                     metadata={
                         "operation_type": MODEL_OPERATION_TYPE,
                         "operation_index": operation["operation_index"],
+                        "raw_discharge_index": raw_discharge_index,
                         "ambient_temperature_c": operation["ambient_temperature_c"],
                         "timestamp": operation["timestamp"],
                         "initial_capacity_ah": initial_capacity,
@@ -279,6 +284,9 @@ class NasaParser(BaseBatteryParser):
                 "model_operation_type": MODEL_OPERATION_TYPE,
                 "operation_counts": dict(operation_counts),
                 "num_operations": len(parsed_operations),
+                "num_discharge_operations_without_capacity": sum(
+                    capacity is None for capacity in discharge_capacities
+                ),
             },
         )
         return cell, canonical_cycles, parsed_operations
