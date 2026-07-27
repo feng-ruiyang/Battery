@@ -71,8 +71,9 @@ PYTHONPATH=src python scripts/cache_latents.py \
 
 ## NASA Zero-Shot Preprocess
 
-Extract the NASA archives into `~/data/nasa/raw`. Archives may remain under
-`~/data/nasa/extracted` for inventory reporting. Then run:
+The parser reads MAT files from `~/data/nasa/raw`. If that directory has no MAT
+files, it falls back to already extracted MAT files under
+`~/data/nasa/extracted`; ZIP files in that directory are only inventoried. Then run:
 
 ```bash
 PYTHONPATH=src python scripts/preprocess.py \

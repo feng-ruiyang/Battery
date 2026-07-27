@@ -72,6 +72,25 @@ def test_nasa_parser_rejects_missing_first_discharge_capacity(tmp_path):
         raise AssertionError("Expected missing first-discharge Capacity to be rejected.")
 
 
+def test_nasa_parser_falls_back_to_extracted_archive_directory(tmp_path):
+    raw_dir = tmp_path / "raw"
+    archive_dir = tmp_path / "extracted"
+    output_dir = tmp_path / "processed"
+    raw_dir.mkdir()
+    batch_dir = archive_dir / "5. Battery Data Set" / "BatteryAgingARC-FY08Q4"
+    batch_dir.mkdir(parents=True)
+    _write_battery(batch_dir / "B0005.mat")
+
+    parser = NasaParser(archive_dir=archive_dir)
+    scan = parser.scan(raw_dir)
+    parser.parse(raw_dir, output_dir)
+
+    assert any("parsing will use extracted MAT files" in note for note in scan.notes)
+    cells = read_jsonl(output_dir / "cells.jsonl")
+    assert cells[0]["cell_id"] == "5._Battery_Data_Set_BatteryAgingARC-FY08Q4__B0005"
+    assert cells[0]["source_file"].endswith("BatteryAgingARC-FY08Q4/B0005.mat")
+
+
 def _write_battery(path):
     operations = np.empty(4, dtype=object)
     operations[0] = _operation("charge", _charge_data(), second=0.0)

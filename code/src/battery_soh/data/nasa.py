@@ -37,15 +37,23 @@ class NasaParser(BaseBatteryParser):
         files = _inventory(raw_dir, location="raw")
         if self.archive_dir is not None:
             files.extend(_inventory(self.archive_dir, location="archive"))
-        mat_count = sum(row["suffix"] == ".mat" and row["location"] == "raw" for row in files)
+        raw_mat_count = sum(
+            row["suffix"] == ".mat" and row["location"] == "raw" for row in files
+        )
+        archive_mat_count = sum(
+            row["suffix"] == ".mat" and row["location"] == "archive" for row in files
+        )
         zip_count = sum(row["suffix"] == ".zip" for row in files)
         notes = [
             "All NASA operations are indexed, but only discharge operations populate cycles.jsonl.",
             "Each cell's first discharge Capacity is the SoH denominator.",
-            f"Found {mat_count} MAT files under raw_dir and {zip_count} ZIP archives in the scan.",
+            f"Found {raw_mat_count} MAT files under raw_dir, "
+            f"{archive_mat_count} MAT files under archive_dir, and {zip_count} ZIP archives.",
         ]
-        if mat_count == 0:
-            notes.append("No MAT files found. Extract the NASA ZIP archives into raw_dir before parsing.")
+        if raw_mat_count == 0 and archive_mat_count:
+            notes.append("raw_dir is empty; parsing will use extracted MAT files from archive_dir.")
+        elif raw_mat_count == 0:
+            notes.append("No MAT files found. Extract the NASA ZIP archives before parsing.")
         return ParserScanResult(
             dataset_id=self.dataset_id,
             raw_dir=normalize_path(raw_dir),
@@ -56,16 +64,21 @@ class NasaParser(BaseBatteryParser):
     def parse(self, raw_dir: Path, output_dir: Path) -> None:
         raw_dir = Path(raw_dir).expanduser()
         output_dir = ensure_dir(Path(output_dir).expanduser())
-        paths = sorted(
-            path
-            for path in raw_dir.rglob("*.mat")
-            if not path.name.startswith(("._", "."))
-        )
+        paths = _mat_paths(raw_dir)
+        source_root = raw_dir
+        if not paths and self.archive_dir is not None:
+            paths = _mat_paths(self.archive_dir)
+            source_root = self.archive_dir
         if self.max_cells is not None:
             paths = paths[: self.max_cells]
         if not paths:
             raise FileNotFoundError(
-                f"No NASA MAT files found under {raw_dir}. Extract the downloaded ZIP files first."
+                f"No NASA MAT files found under {raw_dir}"
+                + (
+                    f" or {self.archive_dir}."
+                    if self.archive_dir is not None
+                    else ". Extract the downloaded ZIP files first."
+                )
             )
 
         cells: list[CanonicalCell] = []
@@ -79,7 +92,11 @@ class NasaParser(BaseBatteryParser):
                 f"({path.stat().st_size / 1_000_000:.1f} MB)",
                 flush=True,
             )
-            cell, cell_cycles, cell_operations = self._parse_file(path, raw_dir, output_dir)
+            cell, cell_cycles, cell_operations = self._parse_file(
+                path,
+                source_root,
+                output_dir,
+            )
             cells.append(cell)
             cycles.extend(cell_cycles)
             operations.extend(cell_operations)
@@ -343,6 +360,16 @@ def _inventory(root: Path, location: str) -> list[dict[str, Any]]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     ]
+
+
+def _mat_paths(root: Path) -> list[Path]:
+    if not root.exists():
+        return []
+    return sorted(
+        path
+        for path in root.rglob("*.mat")
+        if not path.name.startswith(("._", "."))
+    )
 
 
 def _positive_finite_or_none(value: Any) -> float | None:
