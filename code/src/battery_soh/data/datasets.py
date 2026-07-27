@@ -28,7 +28,7 @@ class CanonicalCycleStore:
     """Reader for processed canonical cell/cycle files."""
 
     def __init__(self, processed_dir: str | Path) -> None:
-        self.processed_dir = Path(processed_dir)
+        self.processed_dir = Path(processed_dir).expanduser()
         self.cells = read_jsonl(self.processed_dir / "cells.jsonl")
         self.cycles = read_jsonl(self.processed_dir / "cycles.jsonl")
 

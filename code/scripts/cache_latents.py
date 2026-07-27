@@ -53,7 +53,7 @@ def main() -> None:
     print(f"Loaded checkpoint: {args.checkpoint}", flush=True)
     print(f"Device: {device}", flush=True)
 
-    processed_dir = args.processed_dir or Path(data_cfg["processed_dir"])
+    processed_dir = (args.processed_dir or Path(data_cfg["processed_dir"])).expanduser()
     store = CanonicalCycleStore(processed_dir)
     cell_ids = resolve_cell_ids(store)
     channel_fill_values = {
@@ -118,11 +118,11 @@ def main() -> None:
                 )
 
     if args.output is not None:
-        output = args.output
+        output = args.output.expanduser()
     elif args.processed_dir is not None:
         output = processed_dir / "latents.npz"
     else:
-        output = Path(data_cfg.get("latent_cache", processed_dir / "latents.npz"))
+        output = Path(data_cfg.get("latent_cache", processed_dir / "latents.npz")).expanduser()
     save_latent_cache(
         output,
         z=np.concatenate(z_batches, axis=0),

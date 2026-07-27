@@ -20,6 +20,9 @@ def test_nasa_parser_uses_first_discharge_capacity_and_indexes_all_operations(tm
     cycles = read_jsonl(output_dir / "cycles.jsonl")
     operations = read_jsonl(output_dir / "operations.jsonl")
     split = read_jsonl(output_dir / "splits" / "all_external_test.jsonl")[0]
+    training_split = read_jsonl(
+        output_dir / "splits" / "cell_random_seed_42.jsonl"
+    )[0]
     summary = read_jsonl(output_dir / "scan_summary.jsonl")[0]
 
     assert cells[0]["cell_id"] == "FY08Q4__B0005"
@@ -30,6 +33,12 @@ def test_nasa_parser_uses_first_discharge_capacity_and_indexes_all_operations(tm
         "impedance": 1,
     }
     assert split == {"test": ["FY08Q4__B0005"]}
+    assert training_split == {
+        "train": ["FY08Q4__B0005"],
+        "val": [],
+        "test": [],
+    }
+    assert summary["split_counts"] == {"train": 1, "val": 0, "test": 0}
     assert summary["num_operations"] == 4
     assert summary["num_discharge_cycles"] == 2
     assert [row["operation_type"] for row in operations] == [

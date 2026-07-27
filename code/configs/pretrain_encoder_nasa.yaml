@@ -1,0 +1,39 @@
+experiment:
+  name: nasa_discharge_cycle_autoencoder
+  seed: 42
+  output_dir: outputs/nasa_discharge_cycle_autoencoder
+  timestamped_output: true
+
+data:
+  processed_dir: ~/data/nasa/processed
+  split_file: ~/data/nasa/processed/splits/cell_random_seed_42.jsonl
+  latent_cache: ~/data/nasa/processed/latents.npz
+  channels:
+    - V
+    - I
+    - T
+  sequence_length: 1000
+
+model:
+  input_dim: 3
+  latent_dim: 128
+  d_model: 128
+  num_layers: 3
+  num_heads: 4
+
+training:
+  batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  log_every_n_steps: 10
+  max_epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-5
+  device: auto
+
+logging:
+  backend: wandb
+  project: battery-soh-bnn
+  offline: false

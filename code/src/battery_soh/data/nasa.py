@@ -14,6 +14,7 @@ from scipy.io import loadmat
 from battery_soh.data.io import ensure_dir, write_cells, write_cycle_arrays, write_cycles, write_jsonl
 from battery_soh.data.parsers import BaseBatteryParser
 from battery_soh.data.schema import CanonicalCell, CanonicalCycle, ParserScanResult, normalize_path
+from battery_soh.data.splits import assert_no_cell_leakage, make_cell_level_split
 
 
 NASA_DATASET_ID = "nasa_ames_li_ion"
@@ -29,9 +30,15 @@ class NasaParser(BaseBatteryParser):
         self,
         max_cells: int | None = None,
         archive_dir: Path | None = None,
+        split_seed: int = 42,
+        train_ratio: float = 0.7,
+        val_ratio: float = 0.15,
     ) -> None:
         self.max_cells = max_cells
         self.archive_dir = Path(archive_dir).expanduser() if archive_dir is not None else None
+        self.split_seed = split_seed
+        self.train_ratio = train_ratio
+        self.val_ratio = val_ratio
 
     def scan(self, raw_dir: Path) -> ParserScanResult:
         raw_dir = Path(raw_dir).expanduser()
@@ -126,6 +133,17 @@ class NasaParser(BaseBatteryParser):
         write_cycles(output_dir / "cycles.jsonl", cycles)
         write_jsonl(output_dir / "operations.jsonl", operations)
         write_jsonl(output_dir / "splits" / "all_external_test.jsonl", [{"test": cell_ids}])
+        split = make_cell_level_split(
+            cell_ids,
+            seed=self.split_seed,
+            train_ratio=self.train_ratio,
+            val_ratio=self.val_ratio,
+        ).to_dict()
+        assert_no_cell_leakage(split)
+        write_jsonl(
+            output_dir / "splits" / f"cell_random_seed_{self.split_seed}.jsonl",
+            [split],
+        )
         write_jsonl(
             output_dir / "scan_summary.jsonl",
             [
@@ -139,6 +157,8 @@ class NasaParser(BaseBatteryParser):
                     "model_operation_type": MODEL_OPERATION_TYPE,
                     "num_duplicate_sources_skipped": len(duplicate_sources),
                     "duplicate_sources": duplicate_sources,
+                    "split_seed": self.split_seed,
+                    "split_counts": {name: len(ids) for name, ids in split.items()},
                     "source_files": [normalize_path(path) for path in paths],
                 }
             ],

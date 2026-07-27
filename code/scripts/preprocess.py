@@ -42,9 +42,13 @@ def main() -> None:
         parser = HustParser(max_cells=max_cells)
     elif dataset == "nasa":
         archive_dir = cfg.get("archive_dir")
+        split_cfg = cfg.get("splits", {})
         parser = NasaParser(
             max_cells=max_cells,
             archive_dir=Path(archive_dir) if archive_dir else None,
+            split_seed=int(split_cfg.get("seed", 42)),
+            train_ratio=float(split_cfg.get("train_ratio", 0.7)),
+            val_ratio=float(split_cfg.get("val_ratio", 0.15)),
         )
     else:
         raise ValueError(

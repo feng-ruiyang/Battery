@@ -16,7 +16,7 @@ from battery_soh.data.transforms import stack_cycle_channels
 def load_split_ids(split_file: str | Path | None, split_name: str) -> list[str] | None:
     if split_file is None:
         return None
-    rows = read_jsonl(Path(split_file))
+    rows = read_jsonl(Path(split_file).expanduser())
     if not rows:
         raise ValueError(f"Split file is empty: {split_file}")
     split = rows[0]
@@ -102,7 +102,7 @@ class LatentCacheStore:
     """Reader for cycle-level latent vectors saved by `scripts/cache_latents.py`."""
 
     def __init__(self, path: str | Path) -> None:
-        self.path = Path(path)
+        self.path = Path(path).expanduser()
         with np.load(self.path, allow_pickle=False) as data:
             self.z = np.asarray(data["z"], dtype=np.float32)
             self.cell_ids = np.asarray(data["cell_id"]).astype(str)

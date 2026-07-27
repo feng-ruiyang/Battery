@@ -118,6 +118,31 @@ Because the experiment encodes discharge segments only while the Severson encode
 was trained on complete cycles, interpret it as a deliberately strong domain-shift
 test.
 
+To train the complete model from random initialization on NASA discharge cycles,
+first create the cell-level split if preprocessing was completed by an older
+parser version:
+
+```bash
+PYTHONPATH=src python scripts/create_cell_split.py \
+  --processed-dir ~/data/nasa/processed \
+  --seed 42
+```
+
+Then train the NASA autoencoder, cache all cell latents with its best encoder,
+and train the NASA predictor:
+
+```bash
+PYTHONPATH=src python scripts/pretrain_encoder.py \
+  --config configs/pretrain_encoder_nasa.yaml
+
+PYTHONPATH=src python scripts/cache_latents.py \
+  --config configs/pretrain_encoder_nasa.yaml \
+  --checkpoint outputs/nasa_discharge_cycle_autoencoder/runs/<encoder_run>/best.pt
+
+PYTHONPATH=src python scripts/train_predictor.py \
+  --config configs/train_latent_tf_vbll_nasa.yaml
+```
+
 ## Model Dry Runs
 
 The model code can be shape-checked before the real latent cache exists:
