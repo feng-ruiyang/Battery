@@ -7,7 +7,7 @@ from battery_soh.data.io import read_jsonl
 from battery_soh.data.nasa import NasaParser
 
 
-def test_nasa_parser_uses_first_discharge_capacity_and_indexes_all_operations(tmp_path):
+def test_nasa_parser_uses_two_ah_nominal_capacity_and_indexes_all_operations(tmp_path):
     raw_dir = tmp_path / "raw"
     output_dir = tmp_path / "processed"
     batch_dir = raw_dir / "FY08Q4"
@@ -26,7 +26,7 @@ def test_nasa_parser_uses_first_discharge_capacity_and_indexes_all_operations(tm
     summary = read_jsonl(output_dir / "scan_summary.jsonl")[0]
 
     assert cells[0]["cell_id"] == "FY08Q4__B0005"
-    assert cells[0]["metadata"]["initial_capacity_ah"] == 1.8
+    assert cells[0]["metadata"]["nominal_capacity_ah"] == 2.0
     assert cells[0]["metadata"]["operation_counts"] == {
         "charge": 1,
         "discharge": 2,
@@ -50,10 +50,10 @@ def test_nasa_parser_uses_first_discharge_capacity_and_indexes_all_operations(tm
 
     assert len(cycles) == 2
     assert cycles[0]["q_discharge"] == 1.8
-    assert cycles[0]["soh"] == 1.0
+    assert cycles[0]["soh"] == 1.8 / 2.0
     assert cycles[1]["q_discharge"] == 1.62
-    assert cycles[1]["soh"] == 1.62 / 1.8
-    assert cycles[0]["metadata"]["initial_capacity_source"] == "first_discharge_capacity"
+    assert cycles[1]["soh"] == 1.62 / 2.0
+    assert cycles[0]["metadata"]["soh_capacity_reference"] == "nominal_capacity_2ah"
 
     with np.load(output_dir / cycles[0]["array_path"], allow_pickle=False) as arrays:
         assert {"I", "V", "T", "t", "I_load", "V_load"} <= set(arrays.files)
@@ -66,7 +66,7 @@ def test_nasa_parser_uses_first_discharge_capacity_and_indexes_all_operations(tm
         assert np.iscomplexobj(arrays["raw_Battery_impedance"])
 
 
-def test_nasa_parser_rejects_missing_first_discharge_capacity(tmp_path):
+def test_nasa_parser_skips_missing_first_discharge_capacity(tmp_path):
     raw_dir = tmp_path / "raw"
     output_dir = tmp_path / "processed"
     raw_dir.mkdir()
@@ -75,12 +75,14 @@ def test_nasa_parser_rejects_missing_first_discharge_capacity(tmp_path):
     operations[1] = _operation("discharge", _discharge_data(1.62), second=1.0)
     savemat(raw_dir / "B0006.mat", {"B0006": {"cycle": operations}})
 
-    try:
-        NasaParser().parse(raw_dir, output_dir)
-    except ValueError as error:
-        assert "first discharge operation" in str(error)
-    else:
-        raise AssertionError("Expected missing first-discharge Capacity to be rejected.")
+    NasaParser().parse(raw_dir, output_dir)
+
+    cycles = read_jsonl(output_dir / "cycles.jsonl")
+    assert len(cycles) == 1
+    assert cycles[0]["cycle_index"] == 1
+    assert cycles[0]["metadata"]["raw_discharge_index"] == 2
+    assert cycles[0]["q_discharge"] == 1.62
+    assert cycles[0]["soh"] == 1.62 / 2.0
 
 
 def test_nasa_parser_falls_back_to_extracted_archive_directory(tmp_path):
@@ -148,9 +150,9 @@ def test_nasa_parser_uses_last_positive_dq_when_capacity_is_an_array(tmp_path):
 
     cycles = read_jsonl(output_dir / "cycles.jsonl")
     assert cycles[0]["q_discharge"] == 1.8
-    assert cycles[0]["soh"] == 1.0
+    assert cycles[0]["soh"] == 1.8 / 2.0
     assert cycles[1]["q_discharge"] == 1.62
-    assert cycles[1]["soh"] == 1.62 / 1.8
+    assert cycles[1]["soh"] == 1.62 / 2.0
 
 
 def test_nasa_parser_keeps_missing_capacity_discharge_only_as_operation(tmp_path):

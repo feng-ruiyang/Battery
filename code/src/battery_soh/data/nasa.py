@@ -19,6 +19,7 @@ from battery_soh.data.splits import assert_no_cell_leakage, make_cell_level_spli
 
 NASA_DATASET_ID = "nasa_ames_li_ion"
 MODEL_OPERATION_TYPE = "discharge"
+NOMINAL_CAPACITY_AH = 2.0
 
 
 class NasaParser(BaseBatteryParser):
@@ -55,7 +56,7 @@ class NasaParser(BaseBatteryParser):
         notes = [
             "All NASA operations are indexed, but only discharge operations with "
             "positive finite Capacity populate cycles.jsonl.",
-            "Each cell's first discharge Capacity is the SoH denominator.",
+            "SoH is discharge Capacity divided by the 2 Ah nominal capacity.",
             f"Found {raw_mat_count} MAT files under raw_dir, "
             f"{archive_mat_count} MAT files under archive_dir, and {zip_count} ZIP archives.",
         ]
@@ -154,7 +155,8 @@ class NasaParser(BaseBatteryParser):
                     "num_discharge_cycles": len(cycles),
                     "num_operations": len(operations),
                     "operation_counts": dict(Counter(row["operation_type"] for row in operations)),
-                    "soh_capacity_reference": "first_discharge_capacity",
+                    "soh_capacity_reference": "nominal_capacity_2ah",
+                    "nominal_capacity_ah": NOMINAL_CAPACITY_AH,
                     "model_operation_type": MODEL_OPERATION_TYPE,
                     "num_duplicate_sources_skipped": len(duplicate_sources),
                     "duplicate_sources": duplicate_sources,
@@ -227,10 +229,9 @@ class NasaParser(BaseBatteryParser):
                 }
             )
 
-        initial_capacity = discharge_capacities[0] if discharge_capacities else None
-        if initial_capacity is None:
+        if not any(capacity is not None for capacity in discharge_capacities):
             raise ValueError(
-                f"The first discharge operation has no positive finite Capacity in {path}."
+                f"No discharge operation has positive finite Capacity in {path}."
             )
 
         canonical_cycles: list[CanonicalCycle] = []
@@ -257,15 +258,15 @@ class NasaParser(BaseBatteryParser):
                     t_min=temperature_stats["min"],
                     t_avg=temperature_stats["mean"],
                     t_max=temperature_stats["max"],
-                    soh=capacity / initial_capacity,
+                    soh=capacity / NOMINAL_CAPACITY_AH,
                     metadata={
                         "operation_type": MODEL_OPERATION_TYPE,
                         "operation_index": operation["operation_index"],
                         "raw_discharge_index": raw_discharge_index,
                         "ambient_temperature_c": operation["ambient_temperature_c"],
                         "timestamp": operation["timestamp"],
-                        "initial_capacity_ah": initial_capacity,
-                        "initial_capacity_source": "first_discharge_capacity",
+                        "nominal_capacity_ah": NOMINAL_CAPACITY_AH,
+                        "soh_capacity_reference": "nominal_capacity_2ah",
                     },
                 )
             )
@@ -279,8 +280,8 @@ class NasaParser(BaseBatteryParser):
             num_cycles=len(canonical_cycles),
             metadata={
                 "battery_id": battery_id,
-                "initial_capacity_ah": initial_capacity,
-                "initial_capacity_source": "first_discharge_capacity",
+                "nominal_capacity_ah": NOMINAL_CAPACITY_AH,
+                "soh_capacity_reference": "nominal_capacity_2ah",
                 "model_operation_type": MODEL_OPERATION_TYPE,
                 "operation_counts": dict(operation_counts),
                 "num_operations": len(parsed_operations),
