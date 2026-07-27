@@ -4,6 +4,7 @@ import re
 import time
 from collections import Counter
 from datetime import datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,7 @@ class NasaParser(BaseBatteryParser):
         if not paths and self.archive_dir is not None:
             paths = _mat_paths(self.archive_dir)
             source_root = self.archive_dir
+        paths, duplicate_sources = _deduplicate_mat_paths(paths)
         if self.max_cells is not None:
             paths = paths[: self.max_cells]
         if not paths:
@@ -79,6 +81,11 @@ class NasaParser(BaseBatteryParser):
                     if self.archive_dir is not None
                     else ". Extract the downloaded ZIP files first."
                 )
+            )
+        if duplicate_sources:
+            print(
+                f"Skipped {len(duplicate_sources)} byte-identical duplicate MAT files.",
+                flush=True,
             )
 
         cells: list[CanonicalCell] = []
@@ -130,6 +137,8 @@ class NasaParser(BaseBatteryParser):
                     "operation_counts": dict(Counter(row["operation_type"] for row in operations)),
                     "soh_capacity_reference": "first_discharge_capacity",
                     "model_operation_type": MODEL_OPERATION_TYPE,
+                    "num_duplicate_sources_skipped": len(duplicate_sources),
+                    "duplicate_sources": duplicate_sources,
                     "source_files": [normalize_path(path) for path in paths],
                 }
             ],
@@ -370,6 +379,45 @@ def _mat_paths(root: Path) -> list[Path]:
         for path in root.rglob("*.mat")
         if not path.name.startswith(("._", "."))
     )
+
+
+def _deduplicate_mat_paths(
+    paths: list[Path],
+) -> tuple[list[Path], list[dict[str, str]]]:
+    """Drop byte-identical files repeated across NASA archive subdirectories."""
+    by_size: dict[int, list[Path]] = {}
+    for path in paths:
+        by_size.setdefault(path.stat().st_size, []).append(path)
+
+    duplicate_to_kept: dict[Path, Path] = {}
+    for same_size_paths in by_size.values():
+        if len(same_size_paths) < 2:
+            continue
+        by_digest: dict[str, Path] = {}
+        for path in same_size_paths:
+            digest = _file_sha256(path)
+            kept = by_digest.setdefault(digest, path)
+            if kept != path:
+                duplicate_to_kept[path] = kept
+
+    unique_paths = [path for path in paths if path not in duplicate_to_kept]
+    duplicates = [
+        {
+            "path": normalize_path(path),
+            "duplicate_of": normalize_path(duplicate_to_kept[path]),
+        }
+        for path in paths
+        if path in duplicate_to_kept
+    ]
+    return unique_paths, duplicates
+
+
+def _file_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as f:
+        while chunk := f.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _positive_finite_or_none(value: Any) -> float | None:

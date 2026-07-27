@@ -1,3 +1,5 @@
+import shutil
+
 import numpy as np
 from scipy.io import savemat
 
@@ -89,6 +91,31 @@ def test_nasa_parser_falls_back_to_extracted_archive_directory(tmp_path):
     cells = read_jsonl(output_dir / "cells.jsonl")
     assert cells[0]["cell_id"] == "5._Battery_Data_Set_BatteryAgingARC-FY08Q4__B0005"
     assert cells[0]["source_file"].endswith("BatteryAgingARC-FY08Q4/B0005.mat")
+
+
+def test_nasa_parser_skips_byte_identical_duplicate_mat_files(tmp_path):
+    raw_dir = tmp_path / "raw"
+    output_dir = tmp_path / "processed"
+    first_dir = raw_dir / "BatteryAgingARC_P1"
+    duplicate_dir = raw_dir / "BatteryAgingARC_combined"
+    first_dir.mkdir(parents=True)
+    duplicate_dir.mkdir(parents=True)
+    first_path = first_dir / "B0025.mat"
+    _write_battery(first_path)
+    shutil.copyfile(first_path, duplicate_dir / "B0025.mat")
+
+    NasaParser().parse(raw_dir, output_dir)
+
+    cells = read_jsonl(output_dir / "cells.jsonl")
+    summary = read_jsonl(output_dir / "scan_summary.jsonl")[0]
+    assert len(cells) == 1
+    assert summary["num_duplicate_sources_skipped"] == 1
+    assert summary["duplicate_sources"][0]["path"].endswith(
+        "BatteryAgingARC_combined/B0025.mat"
+    )
+    assert summary["duplicate_sources"][0]["duplicate_of"].endswith(
+        "BatteryAgingARC_P1/B0025.mat"
+    )
 
 
 def _write_battery(path):
