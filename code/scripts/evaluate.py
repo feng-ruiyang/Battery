@@ -153,6 +153,7 @@ def _collect_rollouts(
     mask_batches: list[np.ndarray] = []
     cell_ids: list[str] = []
     forecast_cycle_indices: list[int] = []
+    log_every = min(25, max(1, len(loader) // 20))
     for step, batch in enumerate(loader, start=1):
         z_window = batch["z_window"].to(device, non_blocking=True)
         soh_history = batch["soh_history"].to(device, non_blocking=True)
@@ -178,7 +179,7 @@ def _collect_rollouts(
         forecast_cycle_indices.extend(
             int(value) for value in batch["forecast_cycle_index"].numpy().tolist()
         )
-        if step == 1 or step % 25 == 0 or step == len(loader):
+        if step == 1 or step % log_every == 0 or step == len(loader):
             print(f"rollout batch={step}/{len(loader)}", flush=True)
 
     return {
