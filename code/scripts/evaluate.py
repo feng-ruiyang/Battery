@@ -32,6 +32,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-windows", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save-samples", action="store_true")
+    parser.add_argument(
+        "--use-mean",
+        action="store_true",
+        help="Use the posterior-mean VBLL weights for one deterministic rollout.",
+    )
     return parser.parse_args()
 
 
@@ -56,7 +61,8 @@ def main() -> None:
     model.eval()
     model_kind = str(cfg.get("model", {}).get("kind", "latent_tf_vbll"))
     probabilistic = model.decoder.head_kind == "vbll"
-    effective_samples = args.num_samples if probabilistic else 1
+    stochastic_rollout = probabilistic and not args.use_mean
+    effective_samples = args.num_samples if stochastic_rollout else 1
 
     cache = LatentCacheStore(latent_cache_path)
     split_ids = load_split_ids(split_file, args.split) or []
@@ -93,7 +99,8 @@ def main() -> None:
         f"Model: {model_kind}\n"
         f"Device: {device}\n"
         f"Split: {args.split}; windows={len(dataset)}; cells={len(cell_ids)}\n"
-        f"Rollout samples: requested={args.num_samples}; effective={effective_samples}",
+        f"Rollout samples: requested={args.num_samples}; effective={effective_samples}; "
+        f"use_mean={args.use_mean}",
         flush=True,
     )
 
@@ -102,13 +109,14 @@ def main() -> None:
         loader=loader,
         device=device,
         num_samples=effective_samples,
+        use_mean=args.use_mean,
     )
     metrics, summaries = _summarize_rollouts(
         samples=collected["samples"],
         targets=collected["targets"],
         mask=collected["mask"],
         cell_ids=collected["cell_ids"],
-        probabilistic=probabilistic,
+        probabilistic=stochastic_rollout,
     )
 
     output_dir = args.output_dir or args.checkpoint.parent / (
@@ -122,6 +130,7 @@ def main() -> None:
         "num_windows": len(dataset),
         "num_cells": len(set(collected["cell_ids"].tolist())),
         "num_samples": effective_samples,
+        "use_mean": args.use_mean,
         "metrics": metrics,
     }
     with (output_dir / "metrics.json").open("w", encoding="utf-8") as f:
@@ -147,6 +156,7 @@ def _collect_rollouts(
     loader: DataLoader,
     device: torch.device,
     num_samples: int,
+    use_mean: bool,
 ) -> dict[str, np.ndarray]:
     sample_batches: list[np.ndarray] = []
     target_batches: list[np.ndarray] = []
@@ -170,7 +180,7 @@ def _collect_rollouts(
             state=state_outputs["state"],
             start_soh=soh_history[:, -1],
             num_samples=num_samples,
-            use_mean=model.decoder.head_kind == "deterministic",
+            use_mean=use_mean or model.decoder.head_kind == "deterministic",
         )
         sample_batches.append(samples.cpu().numpy().astype(np.float32))
         target_batches.append(batch["soh_future"].numpy().astype(np.float32))

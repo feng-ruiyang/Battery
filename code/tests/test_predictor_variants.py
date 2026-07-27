@@ -51,6 +51,28 @@ def test_vbll_rollout_samples_fixed_weights_in_parallel() -> None:
     assert not torch.equal(samples[0], samples[1])
 
 
+def test_vbll_rollout_can_use_posterior_mean_weights() -> None:
+    decoder = TeacherForcingTrajectoryDecoder(
+        state_dim=8,
+        horizon=4,
+        hidden_dim=8,
+        num_layers=1,
+        num_heads=2,
+        dim_feedforward=16,
+        dropout=0.0,
+        head_kind="vbll",
+    )
+    decoder.eval()
+    state = torch.randn(2, 8)
+    start_soh = torch.ones(2)
+
+    first = decoder.sample(state, start_soh, num_samples=128, use_mean=True)
+    second = decoder.sample(state, start_soh, num_samples=128, use_mean=True)
+
+    assert first.shape == (1, 2, 4)
+    torch.testing.assert_close(first, second)
+
+
 def test_incremental_decoder_matches_full_prefix_decoder() -> None:
     decoder = TeacherForcingTrajectoryDecoder(
         state_dim=8,
