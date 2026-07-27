@@ -102,13 +102,21 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
             use_mean=use_mean,
         )
 
+        memory = self.state_proj(repeated_state).unsqueeze(1)
+        self_attention_cache: list[Tensor | None] = [None] * len(self.decoder.layers)
         trajectory = []
-        for _ in range(self.horizon):
-            decoded = self._decode_prefix(repeated_state, prefix)
-            features = decoded[:, -1]
+        decoder_input = prefix
+        for position in range(self.horizon):
+            decoded = self._decode_incremental_step(
+                memory=memory,
+                decoder_input=decoder_input,
+                position=position,
+                self_attention_cache=self_attention_cache,
+            )
+            features = decoded[:, 0]
             y_step = (features * sampled_weight).sum(dim=-1) + sampled_bias
             trajectory.append(y_step)
-            prefix = torch.cat([prefix, y_step.unsqueeze(-1)], dim=1)
+            decoder_input = y_step.unsqueeze(-1)
 
         samples = torch.stack(trajectory, dim=-1)
         return samples.reshape(sample_count, batch_size, self.horizon)
@@ -119,6 +127,49 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
         causal_mask = _causal_mask(decoder_inputs.shape[1], decoder_inputs.device)
         decoded = self.decoder(tgt=tgt, memory=memory, tgt_mask=causal_mask)
         return self.norm(decoded)
+
+    def _decode_incremental_step(
+        self,
+        memory: Tensor,
+        decoder_input: Tensor,
+        position: int,
+        self_attention_cache: list[Tensor | None],
+    ) -> Tensor:
+        token = self.soh_proj(decoder_input.unsqueeze(-1))
+        token = token + self.positional.encoding[:, position : position + 1]
+
+        for index, layer in enumerate(self.decoder.layers):
+            if not layer.norm_first:
+                raise RuntimeError("Incremental rollout requires pre-norm decoder layers.")
+
+            query = layer.norm1(token)
+            cached = self_attention_cache[index]
+            key_value = query if cached is None else torch.cat([cached, query], dim=1)
+            self_attention_cache[index] = key_value
+            self_attention = layer.self_attn(
+                query,
+                key_value,
+                key_value,
+                need_weights=False,
+            )[0]
+            token = token + layer.dropout1(self_attention)
+
+            cross_query = layer.norm2(token)
+            cross_attention = layer.multihead_attn(
+                cross_query,
+                memory,
+                memory,
+                need_weights=False,
+            )[0]
+            token = token + layer.dropout2(cross_attention)
+
+            feed_forward_input = layer.norm3(token)
+            feed_forward = layer.linear2(
+                layer.dropout(layer.activation(layer.linear1(feed_forward_input)))
+            )
+            token = token + layer.dropout3(feed_forward)
+
+        return self.norm(token)
 
     def _sample_output_parameters(
         self,

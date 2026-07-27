@@ -141,7 +141,7 @@ def main() -> None:
     print(f"Wrote rollout evaluation to {output_dir}", flush=True)
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def _collect_rollouts(
     model: torch.nn.Module,
     loader: DataLoader,

@@ -51,6 +51,38 @@ def test_vbll_rollout_samples_fixed_weights_in_parallel() -> None:
     assert not torch.equal(samples[0], samples[1])
 
 
+def test_incremental_decoder_matches_full_prefix_decoder() -> None:
+    decoder = TeacherForcingTrajectoryDecoder(
+        state_dim=8,
+        horizon=5,
+        hidden_dim=8,
+        num_layers=2,
+        num_heads=2,
+        dim_feedforward=16,
+        dropout=0.0,
+        head_kind="vbll",
+    )
+    decoder.eval()
+    state = torch.randn(3, 8)
+    decoder_inputs = torch.randn(3, 5)
+
+    expected = decoder._decode_prefix(state, decoder_inputs)
+    memory = decoder.state_proj(state).unsqueeze(1)
+    cache = [None] * len(decoder.decoder.layers)
+    actual_steps = [
+        decoder._decode_incremental_step(
+            memory=memory,
+            decoder_input=decoder_inputs[:, position : position + 1],
+            position=position,
+            self_attention_cache=cache,
+        )
+        for position in range(decoder_inputs.shape[1])
+    ]
+    actual = torch.cat(actual_steps, dim=1)
+
+    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
+
 def test_deterministic_rollout_uses_single_mean_trajectory() -> None:
     decoder = TeacherForcingTrajectoryDecoder(
         state_dim=8,
