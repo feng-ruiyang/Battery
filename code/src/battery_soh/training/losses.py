@@ -203,7 +203,7 @@ def stochastic_rollout_negative_loss(
     if samples is None:
         reference = outputs["y_mean"]
         return reference.new_tensor(0.0)
-    penalty = samples.clamp_max(0.0).square()
+    penalty = samples.clamp_max(0.0).neg()
     mask = batch.get("mask")
     if mask is None:
         return penalty.mean()

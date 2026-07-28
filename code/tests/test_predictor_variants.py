@@ -131,13 +131,13 @@ def test_sample_based_crps_balances_target_error_and_sample_spread() -> None:
 def test_stochastic_rollout_negative_loss_penalizes_only_negative_samples() -> None:
     outputs = {
         "y_mean": torch.zeros(1, 1),
-        "stochastic_rollout_samples": torch.tensor([[[-1.0, 1.0]]]),
+        "stochastic_rollout_samples": torch.tensor([[[-2.0, 1.0]]]),
     }
     batch = {"mask": torch.tensor([[True, True]])}
 
     loss = stochastic_rollout_negative_loss(outputs, batch)
 
-    assert torch.isclose(loss, torch.tensor(0.5))
+    assert torch.isclose(loss, torch.tensor(1.0))
 
 
 def test_scheduled_sampling_uses_model_inputs_at_probability_one() -> None:
