@@ -121,6 +121,54 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
         samples = torch.stack(trajectory, dim=-1)
         return samples.reshape(sample_count, batch_size, self.horizon)
 
+    @torch.no_grad()
+    def scheduled_sampling_inputs(
+        self,
+        state: Tensor,
+        start_soh: Tensor,
+        soh_future: Tensor,
+        probability: float,
+    ) -> tuple[Tensor, Tensor]:
+        if not 0.0 <= probability <= 1.0:
+            raise ValueError(f"Scheduled-sampling probability must be in [0, 1], got {probability}.")
+        if soh_future.shape[1] != self.horizon:
+            raise ValueError(
+                f"soh_future length must equal horizon={self.horizon}, got {soh_future.shape[1]}."
+            )
+
+        memory = self.state_proj(state).unsqueeze(1)
+        self_attention_cache: list[Tensor | None] = [None] * len(self.decoder.layers)
+        decoder_input = start_soh.unsqueeze(-1)
+        decoder_inputs = [decoder_input]
+        selections = []
+
+        for position in range(self.horizon - 1):
+            decoded = self._decode_incremental_step(
+                memory=memory,
+                decoder_input=decoder_input,
+                position=position,
+                self_attention_cache=self_attention_cache,
+            )
+            prediction = self._posterior_mean(decoded[:, 0]).unsqueeze(-1)
+            target = soh_future[:, position : position + 1]
+            valid_target = torch.isfinite(target)
+            selected = (torch.rand_like(target) < probability) & valid_target
+            decoder_input = torch.where(selected, prediction, torch.nan_to_num(target))
+            decoder_inputs.append(decoder_input)
+            selections.append(selected)
+
+        selection_mask = (
+            torch.cat(selections, dim=1)
+            if selections
+            else torch.empty(
+                soh_future.shape[0],
+                0,
+                dtype=torch.bool,
+                device=soh_future.device,
+            )
+        )
+        return torch.cat(decoder_inputs, dim=1), selection_mask
+
     def _decode_prefix(self, state: Tensor, decoder_inputs: Tensor) -> Tensor:
         tgt = self.positional(self.soh_proj(decoder_inputs.unsqueeze(-1)))
         memory = self.state_proj(state).unsqueeze(1)
@@ -210,6 +258,15 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
                 bias = bias.unsqueeze(0)
             sampled_bias = bias[:, 0].repeat_interleave(batch_size, dim=0)
         return weight, sampled_bias
+
+    def _posterior_mean(self, features: Tensor) -> Tensor:
+        if self.head_kind == "vbll":
+            return torch.nn.functional.linear(
+                features,
+                self.vbll_head.weight_mu,
+                self.vbll_head.bias_mu,
+            ).squeeze(-1)
+        return self.deterministic_head(features).squeeze(-1)
 
 
 def make_teacher_forcing_inputs(soh_history: Tensor, soh_future: Tensor) -> Tensor:

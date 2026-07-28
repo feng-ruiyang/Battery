@@ -81,11 +81,27 @@ class SOHProbabilisticPredictor(nn.Module):
         u_window: Tensor | None = None,
         history_mask: Tensor | None = None,
         num_samples: int = 0,
+        scheduled_sampling_probability: float = 0.0,
     ) -> dict:
         state_outputs = self.state_model(z_window=z_window, u_window=u_window, mask=history_mask)
         state = state_outputs["state"]
+        scheduled_fraction = state.new_tensor(0.0)
         if soh_future is None:
             decoder_inputs = _repeat_last_soh(soh_history, self.decoder.horizon)
+        elif scheduled_sampling_probability > 0.0:
+            decoder_was_training = self.decoder.training
+            self.decoder.eval()
+            try:
+                decoder_inputs, selection_mask = self.decoder.scheduled_sampling_inputs(
+                    state=state.detach(),
+                    start_soh=soh_history[:, -1],
+                    soh_future=soh_future,
+                    probability=scheduled_sampling_probability,
+                )
+            finally:
+                self.decoder.train(decoder_was_training)
+            if selection_mask.numel() > 0:
+                scheduled_fraction = selection_mask.to(dtype=state.dtype).mean()
         else:
             decoder_inputs = make_teacher_forcing_inputs(soh_history=soh_history, soh_future=soh_future)
 
@@ -95,6 +111,10 @@ class SOHProbabilisticPredictor(nn.Module):
             "state": state,
             "encoded_history": state_outputs["encoded_history"],
             "next_z_pred": state_outputs["next_z_pred"],
+            "scheduled_sampling_probability": state.new_tensor(
+                scheduled_sampling_probability
+            ),
+            "scheduled_sampling_fraction": scheduled_fraction,
         }
         if num_samples > 0:
             outputs["trajectory_samples"] = self.decoder.sample(

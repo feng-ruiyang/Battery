@@ -99,6 +99,14 @@ def total_loss(outputs: dict[str, Any], batch: dict[str, Tensor], cfg: dict[str,
         "kl": kl.detach(),
         "negative_rate": negative_rate.detach(),
         "smoothness": smoothness.detach(),
+        "scheduled_sampling_probability": _as_tensor(
+            outputs.get("scheduled_sampling_probability", 0.0),
+            data_fit,
+        ).detach(),
+        "scheduled_sampling_fraction": _as_tensor(
+            outputs.get("scheduled_sampling_fraction", 0.0),
+            data_fit,
+        ).detach(),
     }
 
 

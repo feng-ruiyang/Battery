@@ -5,6 +5,7 @@ import torch
 from battery_soh.models.soh_predictor import SOHProbabilisticPredictor
 from battery_soh.models.trajectory_decoder import TeacherForcingTrajectoryDecoder
 from battery_soh.training.losses import masked_trajectory_mse, total_loss
+from battery_soh.training.trainer import scheduled_sampling_probability
 
 
 def test_deterministic_decoder_returns_zero_predictive_variance() -> None:
@@ -71,6 +72,47 @@ def test_vbll_rollout_can_use_posterior_mean_weights() -> None:
 
     assert first.shape == (1, 2, 4)
     torch.testing.assert_close(first, second)
+
+
+def test_scheduled_sampling_uses_model_inputs_at_probability_one() -> None:
+    model = SOHProbabilisticPredictor.vbll(
+        latent_dim=4,
+        aux_dim=0,
+        horizon=4,
+        history_dim=8,
+        decoder_dim=8,
+    )
+    model.eval()
+    outputs = model(
+        z_window=torch.randn(2, 5, 4),
+        soh_history=torch.ones(2, 5),
+        soh_future=torch.full((2, 4), 0.9),
+        scheduled_sampling_probability=1.0,
+    )
+
+    assert outputs["scheduled_sampling_probability"].item() == 1.0
+    assert outputs["scheduled_sampling_fraction"].item() == 1.0
+    assert torch.isfinite(outputs["y_mean"]).all()
+
+
+def test_scheduled_sampling_probability_uses_linear_ramp() -> None:
+    cfg = {
+        "training": {
+            "scheduled_sampling": {
+                "enabled": True,
+                "start_epoch": 10,
+                "end_epoch": 70,
+                "start_probability": 0.0,
+                "end_probability": 0.5,
+            }
+        }
+    }
+
+    assert scheduled_sampling_probability(cfg, 1) == 0.0
+    assert scheduled_sampling_probability(cfg, 10) == 0.0
+    assert scheduled_sampling_probability(cfg, 40) == 0.25
+    assert scheduled_sampling_probability(cfg, 70) == 0.5
+    assert scheduled_sampling_probability(cfg, 100) == 0.5
 
 
 def test_incremental_decoder_matches_full_prefix_decoder() -> None:

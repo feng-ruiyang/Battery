@@ -105,18 +105,45 @@ def main() -> None:
     logger = build_metric_logger(cfg, output_dir)
     best_val = float("inf")
     max_epochs = int(train_cfg.get("max_epochs", 1))
+    schedule_cfg = train_cfg.get("scheduled_sampling", {})
+    val_sampling_probability = (
+        float(schedule_cfg.get("validation_probability", 1.0))
+        if bool(schedule_cfg.get("enabled", False))
+        else 0.0
+    )
     try:
         for epoch in range(1, max_epochs + 1):
             train_result = train_one_epoch(model, train_loader, optimizer, cfg, device, epoch=epoch)
-            val_result = evaluate_one_epoch(model, val_loader, cfg, device) if val_loader else train_result
-            is_best = val_result.loss <= best_val
+            val_result = (
+                evaluate_one_epoch(model, val_loader, cfg, device)
+                if val_loader
+                else train_result
+            )
+            val_rollout_result = (
+                evaluate_one_epoch(
+                    model,
+                    val_loader,
+                    cfg,
+                    device,
+                    forward_fn=lambda current_model, batch: _forward_with_sampling(
+                        current_model,
+                        batch,
+                        probability=val_sampling_probability,
+                    ),
+                )
+                if val_loader and val_sampling_probability > 0.0
+                else val_result
+            )
+            selection_result = val_rollout_result
+            is_best = selection_result.loss <= best_val
             if is_best:
-                best_val = val_result.loss
+                best_val = selection_result.loss
             metrics = {
                 "epoch": epoch,
                 **_prefix_metrics("train", train_result.metrics),
                 **_prefix_metrics("val", val_result.metrics),
-                "best/val_loss": best_val,
+                **_prefix_metrics("val_rollout", val_rollout_result.metrics),
+                "best/val_rollout_loss": best_val,
                 "train/num_windows": len(train_loader.dataset),
                 "val/num_windows": len(val_loader.dataset) if val_loader is not None else 0,
                 "model/parameters": n_params,
@@ -126,14 +153,19 @@ def main() -> None:
             logger.log(metrics)
             print(
                 f"epoch={epoch} train_loss={train_result.loss:.6f} "
-                f"val_loss={val_result.loss:.6f}"
+                f"val_loss={val_result.loss:.6f} "
+                f"val_rollout_loss={val_rollout_result.loss:.6f}"
             )
             save_checkpoint(
                 output_dir / "last.pt",
                 model,
                 optimizer=optimizer,
                 epoch=epoch,
-                metrics={"train_loss": train_result.loss, "val_loss": val_result.loss},
+                metrics={
+                    "train_loss": train_result.loss,
+                    "val_loss": val_result.loss,
+                    "val_rollout_loss": val_rollout_result.loss,
+                },
                 config=cfg,
             )
             if is_best:
@@ -142,7 +174,11 @@ def main() -> None:
                     model,
                     optimizer=optimizer,
                     epoch=epoch,
-                    metrics={"train_loss": train_result.loss, "val_loss": val_result.loss},
+                    metrics={
+                        "train_loss": train_result.loss,
+                        "val_loss": val_result.loss,
+                        "val_rollout_loss": val_rollout_result.loss,
+                    },
                     config=cfg,
                 )
     finally:
@@ -210,6 +246,21 @@ def build_dataloaders(cfg: dict) -> tuple[DataLoader, DataLoader | None]:
         else None
     )
     return train_loader, val_loader
+
+
+def _forward_with_sampling(
+    model: SOHProbabilisticPredictor,
+    batch: dict,
+    probability: float,
+) -> dict:
+    return model(
+        z_window=batch["z_window"],
+        soh_history=batch["soh_history"],
+        soh_future=batch.get("soh_future"),
+        u_window=batch.get("u_window"),
+        history_mask=batch.get("history_mask"),
+        scheduled_sampling_probability=probability,
+    )
 
 
 def _loader_kwargs(train_cfg: dict) -> dict:

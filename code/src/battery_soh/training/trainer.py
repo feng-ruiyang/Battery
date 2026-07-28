@@ -34,9 +34,17 @@ def train_one_epoch(
     count = 0
     log_every = int(cfg.get("training", {}).get("log_every_n_steps", 0))
     total_steps = _safe_len(dataloader)
+    sampling_probability = scheduled_sampling_probability(cfg, epoch)
     for step, batch in enumerate(dataloader, start=1):
         batch = move_batch_to_device(batch, device)
-        outputs = forward_fn(model, batch) if forward_fn else model(**_model_inputs(batch))
+        outputs = (
+            forward_fn(model, batch)
+            if forward_fn
+            else model(
+                **_model_inputs(batch),
+                scheduled_sampling_probability=sampling_probability,
+            )
+        )
         losses = total_loss(outputs, batch, cfg)
         optimizer.zero_grad(set_to_none=True)
         losses["loss"].backward()
@@ -55,6 +63,7 @@ def train_one_epoch(
                 f"train_loss_running={running.get('loss', float('nan')):.6f} "
                 f"train_data_running={running.get('data_fit', float('nan')):.6f} "
                 f"train_state_running={running.get('latent_state', float('nan')):.6f} "
+                f"train_ss={running.get('scheduled_sampling_fraction', 0.0):.3f} "
                 f"train_loss_epoch={epoch_metrics.get('loss', float('nan')):.6f}",
                 flush=True,
             )
@@ -120,3 +129,24 @@ def _safe_len(value: Any) -> int | None:
         return len(value)
     except TypeError:
         return None
+
+
+def scheduled_sampling_probability(cfg: dict[str, Any], epoch: int | None) -> float:
+    schedule = cfg.get("training", {}).get("scheduled_sampling", {})
+    if not schedule or not bool(schedule.get("enabled", False)) or epoch is None:
+        return 0.0
+
+    start_epoch = int(schedule.get("start_epoch", 1))
+    end_epoch = int(schedule.get("end_epoch", start_epoch))
+    start_probability = float(schedule.get("start_probability", 0.0))
+    end_probability = float(schedule.get("end_probability", 0.5))
+    if not 0.0 <= start_probability <= 1.0 or not 0.0 <= end_probability <= 1.0:
+        raise ValueError("Scheduled-sampling probabilities must be in [0, 1].")
+    if end_epoch < start_epoch:
+        raise ValueError("scheduled_sampling.end_epoch must be >= start_epoch.")
+    if epoch <= start_epoch:
+        return start_probability
+    if epoch >= end_epoch:
+        return end_probability
+    progress = (epoch - start_epoch) / max(end_epoch - start_epoch, 1)
+    return start_probability + progress * (end_probability - start_probability)
