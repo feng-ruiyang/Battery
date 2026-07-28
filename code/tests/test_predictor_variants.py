@@ -52,6 +52,19 @@ def test_vbll_rollout_samples_fixed_weights_in_parallel() -> None:
     assert not torch.equal(samples[0], samples[1])
 
 
+def test_vbll_predictor_propagates_prior_standard_deviation() -> None:
+    model = SOHProbabilisticPredictor.vbll(
+        latent_dim=4,
+        aux_dim=0,
+        horizon=3,
+        history_dim=8,
+        decoder_dim=8,
+        vbll_prior_std=0.5**0.5,
+    )
+
+    assert model.decoder.vbll_head.prior_std == 0.5**0.5
+
+
 def test_vbll_rollout_can_use_posterior_mean_weights() -> None:
     decoder = TeacherForcingTrajectoryDecoder(
         state_dim=8,

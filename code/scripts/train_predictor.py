@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 import torch
@@ -40,12 +41,16 @@ def build_model(cfg: dict) -> SOHProbabilisticPredictor:
         "history_dim": int(model_cfg.get("history_dim", 256)),
         "decoder_dim": int(model_cfg["decoder_dim"]) if "decoder_dim" in model_cfg else None,
     }
-    if kind == "latent_tf_vbll":
-        return SOHProbabilisticPredictor.vbll(**kwargs)
+    if kind in {"latent_tf_vbll", "vbll_dynamics"}:
+        prior_variance = float(model_cfg.get("vbll_prior_variance", 1.0))
+        if prior_variance <= 0.0:
+            raise ValueError("model.vbll_prior_variance must be positive.")
+        return SOHProbabilisticPredictor.vbll(
+            **kwargs,
+            vbll_prior_std=math.sqrt(prior_variance),
+        )
     if kind == "latent_tf_deterministic":
         return SOHProbabilisticPredictor.deterministic(**kwargs)
-    if kind == "vbll_dynamics":
-        return SOHProbabilisticPredictor.vbll(**kwargs)
     raise ValueError(f"Unsupported model kind: {kind}")
 
 

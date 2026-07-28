@@ -25,6 +25,7 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
         dim_feedforward: int = 512,
         dropout: float = 0.1,
         head_kind: str = "vbll",
+        vbll_prior_std: float = 1.0,
     ) -> None:
         super().__init__()
         if head_kind not in {"vbll", "deterministic"}:
@@ -45,7 +46,11 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
         self.decoder = nn.TransformerDecoder(layer, num_layers=num_layers)
         self.norm = nn.LayerNorm(hidden_dim)
         if head_kind == "vbll":
-            self.vbll_head = VBLLLinear(input_dim=hidden_dim, output_dim=1)
+            self.vbll_head = VBLLLinear(
+                input_dim=hidden_dim,
+                output_dim=1,
+                prior_std=vbll_prior_std,
+            )
         else:
             self.deterministic_head = nn.Linear(hidden_dim, 1)
 

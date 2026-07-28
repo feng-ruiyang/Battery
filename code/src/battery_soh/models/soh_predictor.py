@@ -35,6 +35,7 @@ class SOHProbabilisticPredictor(nn.Module):
         num_basis: int | None = None,
         history_dim: int = 256,
         decoder_dim: int | None = None,
+        vbll_prior_std: float = 1.0,
     ) -> "SOHProbabilisticPredictor":
         del num_basis
         state_model = LatentStateTransformer(
@@ -46,6 +47,7 @@ class SOHProbabilisticPredictor(nn.Module):
             state_dim=history_dim,
             horizon=horizon,
             hidden_dim=decoder_dim or history_dim,
+            vbll_prior_std=vbll_prior_std,
         )
         return cls(state_model=state_model, decoder=decoder)
 

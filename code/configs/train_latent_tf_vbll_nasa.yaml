@@ -17,6 +17,7 @@ model:
   kind: latent_tf_vbll
   history_dim: 256
   decoder_dim: 256
+  vbll_prior_variance: 0.5
 
 training:
   objective: nll
@@ -29,7 +30,7 @@ training:
   max_epochs: 100
   lr: 1.0e-4
   weight_decay: 1.0e-5
-  beta_kl: 1.0e-5
+  beta_kl: 1.0e-4
   lambda_state: 1.0
   lambda_negative: 0.0
   lambda_smooth: 0.0
@@ -38,7 +39,7 @@ training:
     start_epoch: 10
     end_epoch: 70
     start_probability: 0.0
-    end_probability: 0.5
+    end_probability: 0.25
     validation_probability: 1.0
   device: auto
 
