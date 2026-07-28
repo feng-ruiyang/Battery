@@ -84,6 +84,8 @@ class SOHProbabilisticPredictor(nn.Module):
         history_mask: Tensor | None = None,
         num_samples: int = 0,
         scheduled_sampling_probability: float = 0.0,
+        stochastic_rollout_num_samples: int = 0,
+        stochastic_rollout_horizon: int = 0,
     ) -> dict:
         state_outputs = self.state_model(z_window=z_window, u_window=u_window, mask=history_mask)
         state = state_outputs["state"]
@@ -123,6 +125,13 @@ class SOHProbabilisticPredictor(nn.Module):
                 state=state,
                 start_soh=soh_history[:, -1],
                 num_samples=num_samples,
+            )
+        if stochastic_rollout_num_samples > 0:
+            outputs["stochastic_rollout_samples"] = self.decoder.stochastic_rollout(
+                state=state,
+                start_soh=soh_history[:, -1],
+                num_samples=stochastic_rollout_num_samples,
+                horizon=stochastic_rollout_horizon,
             )
         return outputs
 

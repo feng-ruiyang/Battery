@@ -78,17 +78,20 @@ def total_loss(outputs: dict[str, Any], batch: dict[str, Tensor], cfg: dict[str,
     regularization = outputs.get("regularization", {})
     negative_rate = _as_tensor(regularization.get("negative_rate", 0.0), data_fit)
     smoothness = _as_tensor(regularization.get("smoothness", 0.0), data_fit)
+    stochastic_rollout = stochastic_rollout_loss(outputs, batch, cfg)
 
     beta_kl = float(_deep_get(cfg, "training.beta_kl", 0.0))
     lambda_state = float(_deep_get(cfg, "training.lambda_state", 1.0))
     lambda_negative = float(_deep_get(cfg, "training.lambda_negative", 0.0))
     lambda_smooth = float(_deep_get(cfg, "training.lambda_smooth", 0.0))
+    lambda_rollout = float(_deep_get(cfg, "training.stochastic_rollout.weight", 0.0))
     loss = (
         data_fit
         + lambda_state * latent_state
         + beta_kl * kl
         + lambda_negative * negative_rate
         + lambda_smooth * smoothness
+        + lambda_rollout * stochastic_rollout
     )
     return {
         "loss": loss,
@@ -99,6 +102,7 @@ def total_loss(outputs: dict[str, Any], batch: dict[str, Tensor], cfg: dict[str,
         "kl": kl.detach(),
         "negative_rate": negative_rate.detach(),
         "smoothness": smoothness.detach(),
+        "stochastic_rollout": stochastic_rollout.detach(),
         "scheduled_sampling_probability": _as_tensor(
             outputs.get("scheduled_sampling_probability", 0.0),
             data_fit,
@@ -134,6 +138,55 @@ def latent_next_step_loss(outputs: dict[str, Any], batch: dict[str, Tensor]) -> 
         valid = (~history_mask[:, 1 : 1 + pred.shape[1]]).to(loss.dtype)
         return (loss * valid).sum() / valid.sum().clamp_min(1.0)
     return loss.mean()
+
+
+def stochastic_rollout_loss(
+    outputs: dict[str, Any],
+    batch: dict[str, Tensor],
+    cfg: dict[str, Any],
+) -> Tensor:
+    samples = outputs.get("stochastic_rollout_samples")
+    if samples is None:
+        return batch["soh_future"].new_tensor(0.0)
+
+    horizon = samples.shape[-1]
+    target = batch["soh_future"][:, :horizon]
+    mask = batch.get("mask")
+    if mask is not None:
+        mask = mask[:, :horizon]
+    objective = str(_deep_get(cfg, "training.stochastic_rollout.objective", "crps"))
+    if objective == "crps":
+        return sample_based_crps(samples, target, mask)
+    if objective == "mse":
+        valid = torch.isfinite(target)
+        if mask is not None:
+            valid = valid & mask.to(dtype=torch.bool)
+        if not torch.any(valid):
+            return samples.sum() * 0.0
+        squared_error = (samples - target.unsqueeze(0)).pow(2)
+        return squared_error[:, valid].mean()
+    raise ValueError(f"Unsupported stochastic rollout objective: {objective!r}.")
+
+
+def sample_based_crps(
+    samples: Tensor,
+    target: Tensor,
+    mask: Tensor | None = None,
+) -> Tensor:
+    """Empirical CRPS for samples shaped [num_samples, batch, horizon]."""
+
+    valid = torch.isfinite(target)
+    if mask is not None:
+        valid = valid & mask.to(dtype=torch.bool)
+    if not torch.any(valid):
+        return samples.sum() * 0.0
+
+    target_distance = (samples - target.unsqueeze(0)).abs().mean(dim=0)
+    pairwise_distance = (
+        samples.unsqueeze(1) - samples.unsqueeze(0)
+    ).abs().mean(dim=(0, 1))
+    crps = target_distance - 0.5 * pairwise_distance
+    return crps[valid].mean()
 
 
 def reconstruction_loss(x_recon: Tensor, x_true: Tensor, mask: Tensor | None = None) -> Tensor:

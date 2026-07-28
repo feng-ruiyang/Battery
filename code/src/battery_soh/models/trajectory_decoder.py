@@ -87,8 +87,43 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
         num_samples: int,
         use_mean: bool = False,
     ) -> Tensor:
+        return self._rollout(
+            state=state,
+            start_soh=start_soh,
+            num_samples=num_samples,
+            horizon=self.horizon,
+            use_mean=use_mean,
+        )
+
+    def stochastic_rollout(
+        self,
+        state: Tensor,
+        start_soh: Tensor,
+        num_samples: int,
+        horizon: int,
+    ) -> Tensor:
+        """Differentiable fixed-weight trajectories for multi-step training."""
+
+        return self._rollout(
+            state=state,
+            start_soh=start_soh,
+            num_samples=num_samples,
+            horizon=horizon,
+            use_mean=False,
+        )
+
+    def _rollout(
+        self,
+        state: Tensor,
+        start_soh: Tensor,
+        num_samples: int,
+        horizon: int,
+        use_mean: bool,
+    ) -> Tensor:
         if num_samples <= 0:
             raise ValueError("num_samples must be positive.")
+        if not 1 <= horizon <= self.horizon:
+            raise ValueError(f"horizon must be in [1, {self.horizon}], got {horizon}.")
         sample_count = 1 if use_mean or self.head_kind == "deterministic" else num_samples
         batch_size = state.shape[0]
         repeated_state = (
@@ -111,7 +146,7 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
         self_attention_cache: list[Tensor | None] = [None] * len(self.decoder.layers)
         trajectory = []
         decoder_input = prefix
-        for position in range(self.horizon):
+        for position in range(horizon):
             decoded = self._decode_incremental_step(
                 memory=memory,
                 decoder_input=decoder_input,
@@ -124,7 +159,7 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
             decoder_input = y_step.unsqueeze(-1)
 
         samples = torch.stack(trajectory, dim=-1)
-        return samples.reshape(sample_count, batch_size, self.horizon)
+        return samples.reshape(sample_count, batch_size, horizon)
 
     @torch.no_grad()
     def scheduled_sampling_inputs(

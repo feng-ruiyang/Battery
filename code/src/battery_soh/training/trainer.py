@@ -35,6 +35,7 @@ def train_one_epoch(
     log_every = int(cfg.get("training", {}).get("log_every_n_steps", 0))
     total_steps = _safe_len(dataloader)
     sampling_probability = scheduled_sampling_probability(cfg, epoch)
+    rollout_num_samples, rollout_horizon = stochastic_rollout_settings(cfg, epoch)
     for step, batch in enumerate(dataloader, start=1):
         batch = move_batch_to_device(batch, device)
         outputs = (
@@ -43,6 +44,8 @@ def train_one_epoch(
             else model(
                 **_model_inputs(batch),
                 scheduled_sampling_probability=sampling_probability,
+                stochastic_rollout_num_samples=rollout_num_samples,
+                stochastic_rollout_horizon=rollout_horizon,
             )
         )
         losses = total_loss(outputs, batch, cfg)
@@ -64,6 +67,7 @@ def train_one_epoch(
                 f"train_data_running={running.get('data_fit', float('nan')):.6f} "
                 f"train_state_running={running.get('latent_state', float('nan')):.6f} "
                 f"train_ss={running.get('scheduled_sampling_fraction', 0.0):.3f} "
+                f"train_rollout={running.get('stochastic_rollout', 0.0):.6f} "
                 f"train_loss_epoch={epoch_metrics.get('loss', float('nan')):.6f}",
                 flush=True,
             )
@@ -150,3 +154,22 @@ def scheduled_sampling_probability(cfg: dict[str, Any], epoch: int | None) -> fl
         return end_probability
     progress = (epoch - start_epoch) / max(end_epoch - start_epoch, 1)
     return start_probability + progress * (end_probability - start_probability)
+
+
+def stochastic_rollout_settings(
+    cfg: dict[str, Any],
+    epoch: int | None,
+) -> tuple[int, int]:
+    rollout = cfg.get("training", {}).get("stochastic_rollout", {})
+    if not rollout or not bool(rollout.get("enabled", False)) or epoch is None:
+        return 0, 0
+    if epoch < int(rollout.get("start_epoch", 1)):
+        return 0, 0
+
+    num_samples = int(rollout.get("num_samples", 0))
+    horizon = int(rollout.get("horizon", 0))
+    if num_samples <= 0:
+        raise ValueError("stochastic_rollout.num_samples must be positive.")
+    if horizon <= 0:
+        raise ValueError("stochastic_rollout.horizon must be positive.")
+    return num_samples, horizon

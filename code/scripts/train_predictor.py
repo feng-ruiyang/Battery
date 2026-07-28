@@ -116,6 +116,18 @@ def main() -> None:
         if bool(schedule_cfg.get("enabled", False))
         else 0.0
     )
+    rollout_cfg = train_cfg.get("stochastic_rollout", {})
+    validation_rollout_samples = (
+        int(rollout_cfg.get("validation_num_samples", 0))
+        if bool(rollout_cfg.get("enabled", False))
+        else 0
+    )
+    validation_rollout_horizon = (
+        int(rollout_cfg.get("validation_horizon", rollout_cfg.get("horizon", 0)))
+        if validation_rollout_samples > 0
+        else 0
+    )
+    validation_seed = int(rollout_cfg.get("validation_seed", 42))
     try:
         for epoch in range(1, max_epochs + 1):
             train_result = train_one_epoch(model, train_loader, optimizer, cfg, device, epoch=epoch)
@@ -125,30 +137,37 @@ def main() -> None:
                 else train_result
             )
             val_rollout_result = (
-                evaluate_one_epoch(
+                _evaluate_rollout_validation(
                     model,
                     val_loader,
                     cfg,
                     device,
-                    forward_fn=lambda current_model, batch: _forward_with_sampling(
-                        current_model,
-                        batch,
-                        probability=val_sampling_probability,
-                    ),
+                    probability=val_sampling_probability,
+                    stochastic_num_samples=validation_rollout_samples,
+                    stochastic_horizon=validation_rollout_horizon,
+                    seed=validation_seed,
                 )
-                if val_loader and val_sampling_probability > 0.0
+                if val_loader
+                and (
+                    val_sampling_probability > 0.0
+                    or validation_rollout_samples > 0
+                )
                 else val_result
             )
-            selection_result = val_rollout_result
-            is_best = selection_result.loss <= best_val
+            selection_value = (
+                val_rollout_result.metrics["stochastic_rollout"]
+                if validation_rollout_samples > 0
+                else val_rollout_result.loss
+            )
+            is_best = selection_value <= best_val
             if is_best:
-                best_val = selection_result.loss
+                best_val = selection_value
             metrics = {
                 "epoch": epoch,
                 **_prefix_metrics("train", train_result.metrics),
                 **_prefix_metrics("val", val_result.metrics),
                 **_prefix_metrics("val_rollout", val_rollout_result.metrics),
-                "best/val_rollout_loss": best_val,
+                "best/selection_metric": best_val,
                 "train/num_windows": len(train_loader.dataset),
                 "val/num_windows": len(val_loader.dataset) if val_loader is not None else 0,
                 "model/parameters": n_params,
@@ -159,7 +178,9 @@ def main() -> None:
             print(
                 f"epoch={epoch} train_loss={train_result.loss:.6f} "
                 f"val_loss={val_result.loss:.6f} "
-                f"val_rollout_loss={val_rollout_result.loss:.6f}"
+                f"val_rollout_loss={val_rollout_result.loss:.6f} "
+                f"val_rollout_crps="
+                f"{val_rollout_result.metrics.get('stochastic_rollout', 0.0):.6f}"
             )
             save_checkpoint(
                 output_dir / "last.pt",
@@ -170,6 +191,10 @@ def main() -> None:
                     "train_loss": train_result.loss,
                     "val_loss": val_result.loss,
                     "val_rollout_loss": val_rollout_result.loss,
+                    "val_stochastic_crps": val_rollout_result.metrics.get(
+                        "stochastic_rollout",
+                        0.0,
+                    ),
                 },
                 config=cfg,
             )
@@ -183,6 +208,10 @@ def main() -> None:
                         "train_loss": train_result.loss,
                         "val_loss": val_result.loss,
                         "val_rollout_loss": val_rollout_result.loss,
+                        "val_stochastic_crps": val_rollout_result.metrics.get(
+                            "stochastic_rollout",
+                            0.0,
+                        ),
                     },
                     config=cfg,
                 )
@@ -257,6 +286,8 @@ def _forward_with_sampling(
     model: SOHProbabilisticPredictor,
     batch: dict,
     probability: float,
+    stochastic_num_samples: int = 0,
+    stochastic_horizon: int = 0,
 ) -> dict:
     return model(
         z_window=batch["z_window"],
@@ -265,7 +296,41 @@ def _forward_with_sampling(
         u_window=batch.get("u_window"),
         history_mask=batch.get("history_mask"),
         scheduled_sampling_probability=probability,
+        stochastic_rollout_num_samples=stochastic_num_samples,
+        stochastic_rollout_horizon=stochastic_horizon,
     )
+
+
+def _evaluate_rollout_validation(
+    model: SOHProbabilisticPredictor,
+    dataloader: DataLoader,
+    cfg: dict,
+    device: torch.device,
+    probability: float,
+    stochastic_num_samples: int,
+    stochastic_horizon: int,
+    seed: int,
+):
+    cuda_devices = []
+    if device.type == "cuda":
+        cuda_devices = [
+            device.index if device.index is not None else torch.cuda.current_device()
+        ]
+    with torch.random.fork_rng(devices=cuda_devices):
+        torch.manual_seed(seed)
+        return evaluate_one_epoch(
+            model,
+            dataloader,
+            cfg,
+            device,
+            forward_fn=lambda current_model, batch: _forward_with_sampling(
+                current_model,
+                batch,
+                probability=probability,
+                stochastic_num_samples=stochastic_num_samples,
+                stochastic_horizon=stochastic_horizon,
+            ),
+        )
 
 
 def _loader_kwargs(train_cfg: dict) -> dict:
