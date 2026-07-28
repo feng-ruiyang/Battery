@@ -79,12 +79,16 @@ def total_loss(outputs: dict[str, Any], batch: dict[str, Tensor], cfg: dict[str,
     negative_rate = _as_tensor(regularization.get("negative_rate", 0.0), data_fit)
     smoothness = _as_tensor(regularization.get("smoothness", 0.0), data_fit)
     stochastic_rollout = stochastic_rollout_loss(outputs, batch, cfg)
+    stochastic_negative = stochastic_rollout_negative_loss(outputs, batch)
 
     beta_kl = float(_deep_get(cfg, "training.beta_kl", 0.0))
     lambda_state = float(_deep_get(cfg, "training.lambda_state", 1.0))
     lambda_negative = float(_deep_get(cfg, "training.lambda_negative", 0.0))
     lambda_smooth = float(_deep_get(cfg, "training.lambda_smooth", 0.0))
     lambda_rollout = float(_deep_get(cfg, "training.stochastic_rollout.weight", 0.0))
+    lambda_rollout_negative = float(
+        _deep_get(cfg, "training.stochastic_rollout.negative_weight", 0.0)
+    )
     loss = (
         data_fit
         + lambda_state * latent_state
@@ -92,6 +96,7 @@ def total_loss(outputs: dict[str, Any], batch: dict[str, Tensor], cfg: dict[str,
         + lambda_negative * negative_rate
         + lambda_smooth * smoothness
         + lambda_rollout * stochastic_rollout
+        + lambda_rollout_negative * stochastic_negative
     )
     return {
         "loss": loss,
@@ -103,6 +108,7 @@ def total_loss(outputs: dict[str, Any], batch: dict[str, Tensor], cfg: dict[str,
         "negative_rate": negative_rate.detach(),
         "smoothness": smoothness.detach(),
         "stochastic_rollout": stochastic_rollout.detach(),
+        "stochastic_rollout_negative": stochastic_negative.detach(),
         "scheduled_sampling_probability": _as_tensor(
             outputs.get("scheduled_sampling_probability", 0.0),
             data_fit,
@@ -187,6 +193,24 @@ def sample_based_crps(
     ).abs().mean(dim=(0, 1))
     crps = target_distance - 0.5 * pairwise_distance
     return crps[valid].mean()
+
+
+def stochastic_rollout_negative_loss(
+    outputs: dict[str, Any],
+    batch: dict[str, Tensor],
+) -> Tensor:
+    samples = outputs.get("stochastic_rollout_samples")
+    if samples is None:
+        reference = outputs["y_mean"]
+        return reference.new_tensor(0.0)
+    penalty = samples.clamp_max(0.0).square()
+    mask = batch.get("mask")
+    if mask is None:
+        return penalty.mean()
+    valid = mask[:, : samples.shape[-1]].to(dtype=torch.bool)
+    if not torch.any(valid):
+        return samples.sum() * 0.0
+    return penalty[:, valid].mean()
 
 
 def reconstruction_loss(x_recon: Tensor, x_true: Tensor, mask: Tensor | None = None) -> Tensor:

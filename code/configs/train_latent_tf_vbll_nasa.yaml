@@ -50,6 +50,7 @@ training:
     validation_horizon: 20
     validation_seed: 42
     weight: 0.1
+    negative_weight: 0.1
     objective: crps
   device: auto
 

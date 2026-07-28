@@ -4,7 +4,12 @@ import torch
 
 from battery_soh.models.soh_predictor import SOHProbabilisticPredictor
 from battery_soh.models.trajectory_decoder import TeacherForcingTrajectoryDecoder
-from battery_soh.training.losses import masked_trajectory_mse, sample_based_crps, total_loss
+from battery_soh.training.losses import (
+    masked_trajectory_mse,
+    sample_based_crps,
+    stochastic_rollout_negative_loss,
+    total_loss,
+)
 from battery_soh.training.trainer import (
     scheduled_sampling_probability,
     stochastic_rollout_settings,
@@ -123,6 +128,18 @@ def test_sample_based_crps_balances_target_error_and_sample_spread() -> None:
     assert torch.isclose(loss, torch.tensor(0.5))
 
 
+def test_stochastic_rollout_negative_loss_penalizes_only_negative_samples() -> None:
+    outputs = {
+        "y_mean": torch.zeros(1, 1),
+        "stochastic_rollout_samples": torch.tensor([[[-1.0, 1.0]]]),
+    }
+    batch = {"mask": torch.tensor([[True, True]])}
+
+    loss = stochastic_rollout_negative_loss(outputs, batch)
+
+    assert torch.isclose(loss, torch.tensor(0.5))
+
+
 def test_scheduled_sampling_uses_model_inputs_at_probability_one() -> None:
     model = SOHProbabilisticPredictor.vbll(
         latent_dim=4,
@@ -208,6 +225,7 @@ def test_total_loss_combines_nll_and_differentiable_rollout_crps() -> None:
             "lambda_state": 1.0,
             "stochastic_rollout": {
                 "weight": 0.1,
+                "negative_weight": 0.1,
                 "objective": "crps",
             },
         }
@@ -217,6 +235,7 @@ def test_total_loss_combines_nll_and_differentiable_rollout_crps() -> None:
     losses["loss"].backward()
 
     assert losses["stochastic_rollout"].item() > 0.0
+    assert losses["stochastic_rollout_negative"].item() >= 0.0
     assert model.decoder.vbll_head.weight_rho.grad is not None
     assert torch.count_nonzero(model.decoder.vbll_head.weight_rho.grad) > 0
 

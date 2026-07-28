@@ -128,6 +128,7 @@ def main() -> None:
         else 0
     )
     validation_seed = int(rollout_cfg.get("validation_seed", 42))
+    rollout_negative_weight = float(rollout_cfg.get("negative_weight", 0.0))
     try:
         for epoch in range(1, max_epochs + 1):
             train_result = train_one_epoch(model, train_loader, optimizer, cfg, device, epoch=epoch)
@@ -156,6 +157,8 @@ def main() -> None:
             )
             selection_value = (
                 val_rollout_result.metrics["stochastic_rollout"]
+                + rollout_negative_weight
+                * val_rollout_result.metrics["stochastic_rollout_negative"]
                 if validation_rollout_samples > 0
                 else val_rollout_result.loss
             )
@@ -180,7 +183,9 @@ def main() -> None:
                 f"val_loss={val_result.loss:.6f} "
                 f"val_rollout_loss={val_rollout_result.loss:.6f} "
                 f"val_rollout_crps="
-                f"{val_rollout_result.metrics.get('stochastic_rollout', 0.0):.6f}"
+                f"{val_rollout_result.metrics.get('stochastic_rollout', 0.0):.6f} "
+                f"val_rollout_negative="
+                f"{val_rollout_result.metrics.get('stochastic_rollout_negative', 0.0):.6f}"
             )
             save_checkpoint(
                 output_dir / "last.pt",
@@ -193,6 +198,10 @@ def main() -> None:
                     "val_rollout_loss": val_rollout_result.loss,
                     "val_stochastic_crps": val_rollout_result.metrics.get(
                         "stochastic_rollout",
+                        0.0,
+                    ),
+                    "val_stochastic_negative": val_rollout_result.metrics.get(
+                        "stochastic_rollout_negative",
                         0.0,
                     ),
                 },
@@ -210,6 +219,10 @@ def main() -> None:
                         "val_rollout_loss": val_rollout_result.loss,
                         "val_stochastic_crps": val_rollout_result.metrics.get(
                             "stochastic_rollout",
+                            0.0,
+                        ),
+                        "val_stochastic_negative": val_rollout_result.metrics.get(
+                            "stochastic_rollout_negative",
                             0.0,
                         ),
                     },

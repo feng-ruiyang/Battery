@@ -68,6 +68,8 @@ def train_one_epoch(
                 f"train_state_running={running.get('latent_state', float('nan')):.6f} "
                 f"train_ss={running.get('scheduled_sampling_fraction', 0.0):.3f} "
                 f"train_rollout={running.get('stochastic_rollout', 0.0):.6f} "
+                f"train_negative="
+                f"{running.get('stochastic_rollout_negative', 0.0):.6f} "
                 f"train_loss_epoch={epoch_metrics.get('loss', float('nan')):.6f}",
                 flush=True,
             )
