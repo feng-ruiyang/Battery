@@ -88,8 +88,11 @@ class CalceParser(BaseBatteryParser):
     def scan(self, raw_dir: Path) -> ParserScanResult:
         raw_dir = Path(raw_dir).expanduser()
         files = _inventory(raw_dir)
-        cell_ids = sorted(set(_cell_id_from_path(Path(row["path"])) for row in files))
-        cell_ids = [cell_id for cell_id in cell_ids if cell_id]
+        cell_ids = sorted(
+            cell_id
+            for row in files
+            if (cell_id := _cell_id_from_path(Path(row["path"]))) is not None
+        )
         notes = [
             "CALCE CS2 logs store cumulative charge/discharge capacities inside each Excel file; "
             "per-cycle capacity is computed as max-min within Cycle_Index.",

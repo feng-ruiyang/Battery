@@ -9,6 +9,17 @@ from battery_soh.data.calce import CalceFilterConfig, CalceParser
 from battery_soh.data.io import read_jsonl
 
 
+def test_calce_scan_ignores_non_cs2_files(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    (raw_dir / "notes.txt").write_text("metadata", encoding="utf-8")
+    (raw_dir / "CS2_33.zip").write_bytes(b"not inspected by scan")
+
+    scan = CalceParser().scan(raw_dir)
+
+    assert any("Detected 1 candidate CS2 cells" in note for note in scan.notes)
+
+
 def test_calce_parser_differences_cumulative_capacity_and_filters_diagnostics(
     tmp_path,
     monkeypatch,
