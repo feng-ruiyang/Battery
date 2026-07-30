@@ -220,7 +220,16 @@ latent transition 辅助项为：
 
 \subsection{随机多步 CRPS}
 
-从 epoch 10 开始，每个训练窗口生成 $K=4$ 条长度 $H_r=20$ 的可微随机 rollout。对单个有效目标 $y$ 和样本 $\{\hat y^{(k)}\}_{k=1}^K$，经验 CRPS 为：
+从 epoch 10 开始，每个训练窗口生成 $K=4$ 条可微随机 rollout。为逐步增加长期训练难度，rollout horizon 使用：
+\[
+H_r(e)=
+\begin{cases}
+20, & 10\leq e<30,\\
+40, & 30\leq e<50,\\
+80, & e\geq 50.
+\end{cases}
+\]
+对单个有效目标 $y$ 和样本 $\{\hat y^{(k)}\}_{k=1}^K$，经验 CRPS 为：
 \[
 \widehat{\mathrm{CRPS}}
 =
@@ -265,7 +274,7 @@ NASA 随机 rollout 的主要越界来自负 SoH 尾部。平方 hinge 对接近
 \lambda_{\mathrm{rollout\mbox{-}neg}}=0.1.
 \]
 
-验证阶段固定随机种子 42，使用 $K_{\mathrm{val}}=8$ 条、20 步随机 rollout，并在 scheduled sampling probability $=1$ 的条件下评估。best checkpoint 不再按单步 validation NLL 选择，而按：
+验证阶段固定随机种子 42，使用 $K_{\mathrm{val}}=8$ 条、80 步随机 rollout，并在 scheduled sampling probability $=1$ 的条件下评估。best checkpoint 不再按单步 validation NLL 选择，而按：
 \[
 \mathcal J_{\mathrm{select}}
 =
@@ -289,6 +298,7 @@ NASA 随机 rollout 的主要越界来自负 SoH 尾部。平方 hinge 对接近
   \item predictor 参数量：约 2.77M；
   \item optimizer：AdamW，learning rate $10^{-4}$；
   \item VBLL prior variance：0.5；
+  \item stochastic rollout horizon：epoch 10/30/50 起分别为 20/40/80；
   \item split：cell-level random split，seed 42；
   \item experiment logging：Weights \& Biases 加本地时间戳 checkpoint。
 \end{itemize}

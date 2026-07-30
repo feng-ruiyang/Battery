@@ -70,6 +70,8 @@ def train_one_epoch(
                 f"train_rollout={running.get('stochastic_rollout', 0.0):.6f} "
                 f"train_negative="
                 f"{running.get('stochastic_rollout_negative', 0.0):.6f} "
+                f"train_rollout_horizon="
+                f"{running.get('stochastic_rollout_horizon', 0.0):.0f} "
                 f"train_loss_epoch={epoch_metrics.get('loss', float('nan')):.6f}",
                 flush=True,
             )
@@ -169,9 +171,37 @@ def stochastic_rollout_settings(
         return 0, 0
 
     num_samples = int(rollout.get("num_samples", 0))
-    horizon = int(rollout.get("horizon", 0))
     if num_samples <= 0:
         raise ValueError("stochastic_rollout.num_samples must be positive.")
+
+    schedule = rollout.get("horizon_schedule")
+    if schedule is not None:
+        if not isinstance(schedule, list) or not schedule:
+            raise ValueError("stochastic_rollout.horizon_schedule must be a non-empty list.")
+        parsed_schedule = []
+        for stage in schedule:
+            if not isinstance(stage, dict):
+                raise ValueError("Each stochastic rollout horizon stage must be a mapping.")
+            stage_epoch = int(stage.get("start_epoch", 0))
+            stage_horizon = int(stage.get("horizon", 0))
+            if stage_epoch <= 0 or stage_horizon <= 0:
+                raise ValueError(
+                    "Each stochastic rollout horizon stage requires positive "
+                    "start_epoch and horizon."
+                )
+            parsed_schedule.append((stage_epoch, stage_horizon))
+        if len({stage_epoch for stage_epoch, _ in parsed_schedule}) != len(parsed_schedule):
+            raise ValueError("stochastic_rollout.horizon_schedule start epochs must be unique.")
+        active = [
+            (stage_epoch, stage_horizon)
+            for stage_epoch, stage_horizon in parsed_schedule
+            if epoch >= stage_epoch
+        ]
+        if not active:
+            return 0, 0
+        horizon = max(active, key=lambda stage: stage[0])[1]
+    else:
+        horizon = int(rollout.get("horizon", 0))
     if horizon <= 0:
         raise ValueError("stochastic_rollout.horizon must be positive.")
     return num_samples, horizon

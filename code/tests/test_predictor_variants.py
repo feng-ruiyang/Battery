@@ -197,6 +197,32 @@ def test_stochastic_rollout_settings_respect_start_epoch() -> None:
     assert stochastic_rollout_settings(cfg, 10) == (4, 20)
 
 
+def test_stochastic_rollout_settings_use_horizon_curriculum() -> None:
+    cfg = {
+        "training": {
+            "stochastic_rollout": {
+                "enabled": True,
+                "start_epoch": 10,
+                "num_samples": 4,
+                "horizon": 80,
+                "horizon_schedule": [
+                    {"start_epoch": 10, "horizon": 20},
+                    {"start_epoch": 30, "horizon": 40},
+                    {"start_epoch": 50, "horizon": 80},
+                ],
+            }
+        }
+    }
+
+    assert stochastic_rollout_settings(cfg, 9) == (0, 0)
+    assert stochastic_rollout_settings(cfg, 10) == (4, 20)
+    assert stochastic_rollout_settings(cfg, 29) == (4, 20)
+    assert stochastic_rollout_settings(cfg, 30) == (4, 40)
+    assert stochastic_rollout_settings(cfg, 49) == (4, 40)
+    assert stochastic_rollout_settings(cfg, 50) == (4, 80)
+    assert stochastic_rollout_settings(cfg, 100) == (4, 80)
+
+
 def test_total_loss_combines_nll_and_differentiable_rollout_crps() -> None:
     model = SOHProbabilisticPredictor.vbll(
         latent_dim=4,
@@ -236,6 +262,7 @@ def test_total_loss_combines_nll_and_differentiable_rollout_crps() -> None:
 
     assert losses["stochastic_rollout"].item() > 0.0
     assert losses["stochastic_rollout_negative"].item() >= 0.0
+    assert losses["stochastic_rollout_horizon"].item() == 3
     assert model.decoder.vbll_head.weight_rho.grad is not None
     assert torch.count_nonzero(model.decoder.vbll_head.weight_rho.grad) > 0
 

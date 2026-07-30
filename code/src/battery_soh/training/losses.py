@@ -80,6 +80,8 @@ def total_loss(outputs: dict[str, Any], batch: dict[str, Tensor], cfg: dict[str,
     smoothness = _as_tensor(regularization.get("smoothness", 0.0), data_fit)
     stochastic_rollout = stochastic_rollout_loss(outputs, batch, cfg)
     stochastic_negative = stochastic_rollout_negative_loss(outputs, batch)
+    rollout_samples = outputs.get("stochastic_rollout_samples")
+    rollout_horizon = rollout_samples.shape[-1] if rollout_samples is not None else 0
 
     beta_kl = float(_deep_get(cfg, "training.beta_kl", 0.0))
     lambda_state = float(_deep_get(cfg, "training.lambda_state", 1.0))
@@ -109,6 +111,7 @@ def total_loss(outputs: dict[str, Any], batch: dict[str, Tensor], cfg: dict[str,
         "smoothness": smoothness.detach(),
         "stochastic_rollout": stochastic_rollout.detach(),
         "stochastic_rollout_negative": stochastic_negative.detach(),
+        "stochastic_rollout_horizon": data_fit.new_tensor(rollout_horizon).detach(),
         "scheduled_sampling_probability": _as_tensor(
             outputs.get("scheduled_sampling_probability", 0.0),
             data_fit,

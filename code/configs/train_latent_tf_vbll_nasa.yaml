@@ -44,10 +44,17 @@ training:
   stochastic_rollout:
     enabled: true
     start_epoch: 10
-    horizon: 20
+    horizon: 80
+    horizon_schedule:
+      - start_epoch: 10
+        horizon: 20
+      - start_epoch: 30
+        horizon: 40
+      - start_epoch: 50
+        horizon: 80
     num_samples: 4
     validation_num_samples: 8
-    validation_horizon: 20
+    validation_horizon: 80
     validation_seed: 42
     weight: 0.1
     negative_weight: 0.1
