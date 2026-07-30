@@ -2,7 +2,7 @@
 
 This directory contains the implementation workspace for the BNN-Transformer battery SoH project.
 
-The current code supports Severson, HUST, and NASA data ingestion, canonicalization,
+The current code supports Severson, HUST, NASA, and CALCE-CS2 data ingestion, canonicalization,
 cycle encoder pretraining, latent caching, and latent-window SoH predictor training.
 
 ## Setup
@@ -86,7 +86,7 @@ discharge operations populate `cycles.jsonl` and therefore enter the current
 encoder and rollout experiment. For each cell, SoH is defined as:
 
 ```text
-SoH_k = discharge Capacity_k / first discharge Capacity
+SoH_k = discharge Capacity_k / 2 Ah nominal capacity
 ```
 
 Create NASA latents with the frozen Severson encoder:
@@ -159,6 +159,103 @@ PYTHONPATH=src python scripts/pretrain_encoder.py \
   --config configs/pretrain_encoder_nasa.yaml \
   --resume outputs/nasa_discharge_cycle_autoencoder/runs/<encoder_run>/best.pt
 ```
+
+## CALCE-CS2 Cross-Protocol Preprocess
+
+The CALCE parser currently targets the cleaner CS2 full-cycle subset:
+
+```text
+CS2_33, CS2_34, CS2_35, CS2_36, CS2_37, CS2_38
+```
+
+Download the ZIP files under `~/data/calce/raw/cs2`:
+
+```bash
+mkdir -p ~/data/calce/raw/cs2
+cd ~/data/calce/raw/cs2
+
+for CELL in CS2_33 CS2_34 CS2_35 CS2_36 CS2_37 CS2_38; do
+  wget -c --tries=5 --timeout=60 \
+    "https://web.calce.umd.edu/batteries/data/${CELL}.zip" \
+    -O "${CELL}.zip"
+done
+```
+
+Then preprocess:
+
+```bash
+PYTHONPATH=src python -u scripts/preprocess.py \
+  --config configs/preprocess_calce.yaml
+```
+
+CALCE CS2 Excel files store cumulative `Charge_Capacity(Ah)` and
+`Discharge_Capacity(Ah)` within each workbook. The parser computes per-cycle
+capacity as `max - min` inside each `Cycle_Index`, then defines SoH as:
+
+```text
+SoH_k = per-cycle discharge capacity_k / 1.1 Ah nominal CS2 capacity
+```
+
+The parser filters incomplete boundary cycles and local diagnostic outliers. It
+writes `cycle_filter_diagnostics.jsonl` with the drop reason for every excluded
+cycle. The current first-pass cross-protocol split is:
+
+```text
+train: CS2_34, CS2_35, CS2_36, CS2_37
+val:   CS2_33
+test:  CS2_38
+```
+
+Fit train-only normalization over the two available channels:
+
+```bash
+PYTHONPATH=src python -u scripts/fit_channel_normalizer.py \
+  --processed-dir ~/data/calce/processed \
+  --split-file ~/data/calce/processed/splits/cell_random_seed_42.jsonl \
+  --split train \
+  --channels V I \
+  --sequence-length 1000 \
+  --output ~/data/calce/processed/normalization/train_vi_seed_42.json
+```
+
+Train a CALCE autoencoder by copying the NASA encoder config and changing
+paths, channels, and `model.input_dim` to 2:
+
+```bash
+cp configs/pretrain_encoder_nasa.yaml configs/pretrain_encoder_calce.yaml
+```
+
+Set:
+
+```yaml
+experiment:
+  name: calce_cs2_cycle_autoencoder
+  output_dir: outputs/calce_cs2_cycle_autoencoder
+data:
+  processed_dir: ~/data/calce/processed
+  split_file: ~/data/calce/processed/splits/cell_random_seed_42.jsonl
+  latent_cache: ~/data/calce/processed/latents.npz
+  normalizer: ~/data/calce/processed/normalization/train_vi_seed_42.json
+  channels: [V, I]
+  sequence_length: 1000
+model:
+  input_dim: 2
+```
+
+Then run:
+
+```bash
+PYTHONPATH=src python -u scripts/pretrain_encoder.py \
+  --config configs/pretrain_encoder_calce.yaml
+
+PYTHONPATH=src python -u scripts/cache_latents.py \
+  --config configs/pretrain_encoder_calce.yaml \
+  --checkpoint outputs/calce_cs2_cycle_autoencoder/runs/<encoder_run>/best.pt \
+  --output ~/data/calce/processed/latent_cache/<encoder_run>_best/latents.npz
+```
+
+The first completed CALCE-CS2 encoder run produced 5430 finite cycle latents
+with shape `(5430, 128)` and best validation reconstruction MSE around `0.0305`.
 
 ## Model Dry Runs
 

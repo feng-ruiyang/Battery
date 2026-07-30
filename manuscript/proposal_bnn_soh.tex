@@ -28,7 +28,7 @@
 
 \section{项目简介}
 
-锂离子电池健康状态（State of Health, SoH）预测不仅需要给出未来容量的点估计，还需要描述长时自回归过程中误差与模型不确定性的传播。本项目构建一套从原始循环曲线到概率 SoH 轨迹的统一流程：首先把 Severson、HUST 和 NASA 数据转换为共同的 cell-cycle 结构；随后使用 Transformer 自动编码器将单次循环的电压、电流和温度曲线压缩为 latent state；最后由 Degeneration Transformer 汇总历史 latent，并通过 Variational Bayesian Last Layer（VBLL）自回归解码未来 SoH。
+锂离子电池健康状态（State of Health, SoH）预测不仅需要给出未来容量的点估计，还需要描述长时自回归过程中误差与模型不确定性的传播。本项目构建一套从原始循环曲线到概率 SoH 轨迹的统一流程：首先把 Severson、HUST、NASA 和 CALCE 数据转换为共同的 cell-cycle 结构；随后使用 Transformer 自动编码器将单次循环的电压、电流和温度曲线压缩为 latent state；最后由 Degeneration Transformer 汇总历史 latent，并通过 Variational Bayesian Last Layer（VBLL）自回归解码未来 SoH。
 
 当前研究重点已经从单步 teacher forcing 拓展到多步 free-running rollout。最新代码在基础 NLL 训练之外加入 scheduled sampling、可微随机多步 rollout、sample-based CRPS 和负 SoH 约束，使训练目标直接作用于实际测试时使用的概率轨迹，而不只优化已知真实历史条件下的单步分布。
 
@@ -54,7 +54,7 @@ p(\mathbf y_{t+1:t+H}\mid X_{1:t},\mathbf y_{1:t},\mathcal D),
 
 \subsection{统一 cell-cycle 数据结构}
 
-项目当前支持 Severson LFP fast-charge、HUST LFP 和 NASA Ames battery aging 数据。不同来源首先被转换为以下统一结构：
+项目当前支持 Severson LFP fast-charge、HUST LFP、NASA Ames battery aging 和 CALCE CS2 数据。不同来源首先被转换为以下统一结构：
 \begin{itemize}
   \item \texttt{cells.jsonl}：每个电池一行，保存 dataset id、cell id、batch id、循环数量与数据来源；
   \item \texttt{cycles.jsonl}：每个有效 cycle 一行，保存容量、SoH、温度统计和曲线文件位置；
@@ -320,7 +320,41 @@ python scripts/evaluate.py \
   --num-samples 128 --save-samples
 \end{verbatim}
 
-\subsection{初步实验观察}
+\subsection{CALCE-CS2 跨协议实验}
+
+为检验模型在同类型电池、不同循环协议之间的泛化能力，当前新增 CALCE CS2 数据处理流程。CS2 为 $1.1\,\mathrm{Ah}$ LiCoO$_2$ prismatic cell。第一版只纳入 \texttt{CS2\_33--CS2\_38}，避免把 partial cycling、随机截止电压或其他复杂协议混入同一实验。
+
+CALCE Excel 日志中的 \texttt{Charge\_Capacity(Ah)} 和 \texttt{Discharge\_Capacity(Ah)} 在每个 Excel 文件内是累计容量，因此单个 cycle 的容量不能直接取该列最大值，而应按：
+\[
+Q^{\mathrm{discharge}}_i
+=
+\max(\mathrm{Discharge\_Capacity})_i
+-
+\min(\mathrm{Discharge\_Capacity})_i.
+\]
+SoH 使用标称容量定义：
+\[
+\mathrm{SoH}_i=\frac{Q^{\mathrm{discharge}}_i}{1.1\,\mathrm{Ah}}.
+\]
+
+预处理首先按文件日期排序，再按 \texttt{Cycle\_Index} 分组。为了去除文件边界残缺 cycle 和诊断性非标准 cycle，当前使用两层过滤：第一层要求充放电容量均大于 $0.03\,\mathrm{Ah}$、充放电容量相对 mismatch 不超过 0.25、电压覆盖约 $2.7$--$4.2\,\mathrm{V}$ 且采样点数不少于 50；第二层剔除比前后 3 个邻居 median 低超过 0.08 SoH 的局部异常点。该策略在小样 \texttt{CS2\_33} 上消除了大幅不真实回跳。
+
+当前完整 CALCE-CS2 处理结果为 6 个 cell、5430 个有效 cycle，过滤掉 256 个 cycle。其中局部 SoH 异常点 166 个、充放电容量不匹配 52 个、低放电容量 24 个。seed 42 的 cell split 为：
+\[
+\mathrm{train}=\{\mathrm{CS2\_34,CS2\_35,CS2\_36,CS2\_37}\},\quad
+\mathrm{val}=\{\mathrm{CS2\_33}\},\quad
+\mathrm{test}=\{\mathrm{CS2\_38}\}.
+\]
+其中 \texttt{CS2\_33/34} 近似为 0.5C 组，\texttt{CS2\_35--38} 近似为 1C 组，因此该 split 用于第一轮跨协议探索；后续将额外构造严格同协议 split 做微调和对照。
+
+CALCE 缺少温度通道，因此 cycle encoder 使用 \texttt{V/I} 两通道。训练 cell 上拟合的标准化统计为：
+\[
+\mu_V=3.8571,\quad \sigma_V=0.2740,\qquad
+\mu_I=-0.0338,\quad \sigma_I=0.7220.
+\]
+CALCE autoencoder 使用与 NASA 相同的 latent dimension 128、sequence length 1000 和时间戳 checkpoint 机制。当前 run 在 epoch 47 early stopping；最低 validation reconstruction MSE 约为 0.0305，latent cache 形状为 $(5430,128)$，latent 均值为 $-0.0707$、标准差为 $0.4186$，所有 latent 与 SoH 均为有限值。CALCE predictor 训练正在进行中，因此本文档暂不写入其结论性指标。
+
+\subsection{初步 NASA 实验观察}
 
 目前 NASA 单次 cell split 的探索性结果如下。表中 ``mean MAE'' 使用 posterior-mean 权重 free-running；``MC MAE'' 和 CRPS 使用 128 条随机轨迹的样本均值与样本分布。``sample 越界'' 是早期比较脚本对完整 sample tensor 统计的 $[0,1.2]$ 越界比例。以下结果用于指导方法迭代，尚不能替代多随机种子统计。
 
@@ -340,6 +374,33 @@ scheduled sampling + stochastic CRPS & 0.0551 & 0.0638 & 0.0864 & 0.9877 & 0.105
 
 结果表明，scheduled sampling 可以改善 posterior-mean 轨迹，但若不直接训练随机 rollout，VBLL 样本会明显发散；加入 stochastic CRPS 后，MC MAE、CRPS、区间宽度和早期口径下的越界比例均改善。平方负值惩罚实验在有效 mask 位置上的负样本比例约为 11.12\%，尚未显示出明显改善；由于早期基线的 10.49\% 是未应用 mask 的统计，最终结论必须先按统一口径重算。线性 hinge 已接入代码，效果同样需要完成同协议评估后再写入结论。
 
+\subsection{CALCE 已完成结果}
+
+CALCE 当前完成到 encoder 和 latent cache 阶段。表 \ref{tab:calce_pretrain} 总结了已确认的中间结果。由于 predictor 仍在运行，CALCE 的概率 rollout、CRPS 和 coverage 暂不纳入结论。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{ll}
+\toprule
+项目 & 当前结果 \\
+\midrule
+cells / cycles & 6 / 5430 \\
+split & train 4, validation 1, test 1 \\
+cycle channels & \texttt{V/I} \\
+sequence length / latent dim & 1000 / 128 \\
+train cycles for normalizer & 3577 \\
+autoencoder best validation MSE & $\approx 0.0305$ \\
+early stopping epoch & 47 \\
+latent cache shape & $(5430,128)$ \\
+latent finite / SoH finite & true / true \\
+SoH range & $0.0669$--$1.0561$ \\
+\bottomrule
+\end{tabular}
+\caption{CALCE-CS2 当前预处理、标准化、autoencoder 与 latent cache 结果。}
+\label{tab:calce_pretrain}
+\end{table}
+
 \subsection{基线与消融}
 
 为了区分改进来源，后续实验按相同 latent cache 和相同 cell split 比较：
@@ -351,7 +412,8 @@ scheduled sampling + stochastic CRPS & 0.0551 & 0.0638 & 0.0864 & 0.9877 & 0.105
   \item 不同 $\beta_{\mathrm{KL}}$、prior variance、rollout horizon 和样本数量；
   \item 有无 latent next-step 辅助损失；
   \item best checkpoint 与 last checkpoint；
-  \item NASA 同分布测试与 Severson/HUST 跨数据集测试；
+  \item NASA 同分布测试、CALCE 跨协议测试与 Severson/HUST 跨数据集测试；
+  \item CALCE-CS2 跨协议训练与严格同协议微调；
   \item 后续加入 MC Dropout、Deep Ensemble、Last-layer Laplace 和显式退化动力学。
 \end{itemize}
 
@@ -379,7 +441,7 @@ scheduled sampling + stochastic CRPS & 0.0551 & 0.0638 & 0.0864 & 0.9877 & 0.105
 \toprule
 阶段 & 工作内容 & 决策标准 \\
 \midrule
-P0 & 三数据集规范化、cell split、缺失值检查 & 无 cell 泄漏，标签与输入有限 \\
+P0 & 多数据集规范化、cell split、缺失值检查 & 无 cell 泄漏，标签与输入有限 \\
 P1 & train-only 标准化、autoencoder、latent cache & 重构稳定，cache 可复用 \\
 P2 & Degeneration Transformer + VBLL predictor & 单步 NLL 与均值轨迹合理 \\
 P3 & scheduled sampling + stochastic CRPS & 多步 MC MAE 和 CRPS改善 \\
@@ -393,7 +455,7 @@ P6 & ensemble、Laplace、显式动力学对照 & 明确收益来源和计算代
 \section{预期贡献}
 
 \begin{enumerate}
-  \item 建立 Severson、HUST 与 NASA 到统一 latent-window 概率预测的可复现实验管线。
+  \item 建立 Severson、HUST、NASA 与 CALCE 到统一 latent-window 概率预测的可复现实验管线。
   \item 使用 train-only 通道标准化和 Transformer cycle autoencoder，在避免数据泄漏的前提下生成共享 latent cache。
   \item 将 Degeneration Transformer 与 VBLL 自回归 decoder 结合，并明确区分 latent transition 与 SoH trajectory generation。
   \item 使用固定 posterior weight draw 的可微多步 rollout 和 sample-based CRPS，直接优化测试时使用的联合概率轨迹。
