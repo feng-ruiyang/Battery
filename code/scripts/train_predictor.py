@@ -54,6 +54,7 @@ def build_model(cfg: dict) -> SOHProbabilisticPredictor:
         return SOHProbabilisticPredictor.vbll(
             **kwargs,
             vbll_prior_std=math.sqrt(prior_variance),
+            vbll_init_rho=float(model_cfg.get("vbll_init_rho", -5.0)),
         )
     if kind == "latent_tf_deterministic":
         return SOHProbabilisticPredictor.deterministic(**kwargs)

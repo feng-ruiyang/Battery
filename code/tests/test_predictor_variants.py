@@ -72,9 +72,18 @@ def test_vbll_predictor_propagates_prior_standard_deviation() -> None:
         history_dim=8,
         decoder_dim=8,
         vbll_prior_std=0.5**0.5,
+        vbll_init_rho=-6.0,
     )
 
     assert model.decoder.vbll_head.prior_std == 0.5**0.5
+    torch.testing.assert_close(
+        model.decoder.vbll_head.weight_rho,
+        torch.full_like(model.decoder.vbll_head.weight_rho, -6.0),
+    )
+    torch.testing.assert_close(
+        model.decoder.vbll_head.bias_rho,
+        torch.full_like(model.decoder.vbll_head.bias_rho, -6.0),
+    )
 
 
 def test_vbll_rho_parameters_use_independent_learning_rate() -> None:
