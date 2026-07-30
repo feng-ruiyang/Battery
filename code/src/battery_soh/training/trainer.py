@@ -5,6 +5,7 @@ from typing import Any, Callable, Iterable
 
 import torch
 from torch import Tensor, nn
+from torch.nn import functional as F
 
 from battery_soh.training.losses import total_loss
 
@@ -51,6 +52,7 @@ def train_one_epoch(
         losses = total_loss(outputs, batch, cfg)
         optimizer.zero_grad(set_to_none=True)
         losses["loss"].backward()
+        losses["vbll_rho_grad_norm"] = vbll_rho_grad_norm(model)
         optimizer.step()
         _accumulate(totals, losses)
         _accumulate(running_totals, losses)
@@ -72,6 +74,8 @@ def train_one_epoch(
                 f"{running.get('stochastic_rollout_negative', 0.0):.6f} "
                 f"train_rollout_horizon="
                 f"{running.get('stochastic_rollout_horizon', 0.0):.0f} "
+                f"train_rho_grad="
+                f"{running.get('vbll_rho_grad_norm', 0.0):.6f} "
                 f"train_loss_epoch={epoch_metrics.get('loss', float('nan')):.6f}",
                 flush=True,
             )
@@ -205,3 +209,90 @@ def stochastic_rollout_settings(
     if horizon <= 0:
         raise ValueError("stochastic_rollout.horizon must be positive.")
     return num_samples, horizon
+
+
+def build_predictor_optimizer(
+    model: nn.Module,
+    cfg: dict[str, Any],
+) -> torch.optim.Optimizer:
+    train_cfg = cfg.get("training", {})
+    learning_rate = float(train_cfg.get("lr", 1.0e-4))
+    weight_decay = float(train_cfg.get("weight_decay", 0.0))
+    rho_multiplier = float(train_cfg.get("vbll_rho_lr_multiplier", 1.0))
+    if rho_multiplier <= 0.0:
+        raise ValueError("training.vbll_rho_lr_multiplier must be positive.")
+
+    base_parameters = []
+    rho_parameters = []
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        if name.endswith(("weight_rho", "bias_rho")):
+            rho_parameters.append(parameter)
+        else:
+            base_parameters.append(parameter)
+
+    parameter_groups = [
+        {
+            "params": base_parameters,
+            "lr": learning_rate,
+            "group_name": "base",
+        }
+    ]
+    if rho_parameters:
+        parameter_groups.append(
+            {
+                "params": rho_parameters,
+                "lr": learning_rate * rho_multiplier,
+                "group_name": "vbll_rho",
+            }
+        )
+    return torch.optim.AdamW(parameter_groups, weight_decay=weight_decay)
+
+
+def optimizer_learning_rates(
+    optimizer: torch.optim.Optimizer,
+) -> dict[str, float]:
+    return {
+        str(group.get("group_name", f"group_{index}")): float(group["lr"])
+        for index, group in enumerate(optimizer.param_groups)
+    }
+
+
+@torch.no_grad()
+def vbll_posterior_metrics(model: nn.Module) -> dict[str, float]:
+    weight_std = []
+    bias_std = []
+    for name, parameter in model.named_parameters():
+        if name.endswith("weight_rho"):
+            weight_std.append(F.softplus(parameter.detach()).reshape(-1))
+        elif name.endswith("bias_rho"):
+            bias_std.append(F.softplus(parameter.detach()).reshape(-1))
+
+    metrics: dict[str, float] = {}
+    if weight_std:
+        values = torch.cat(weight_std)
+        metrics["weight_std_mean"] = float(values.mean().cpu())
+        metrics["weight_std_max"] = float(values.max().cpu())
+    if bias_std:
+        values = torch.cat(bias_std)
+        metrics["bias_std"] = float(values.mean().cpu())
+    return metrics
+
+
+def vbll_rho_grad_norm(model: nn.Module) -> Tensor:
+    squared_norm = None
+    reference = None
+    for name, parameter in model.named_parameters():
+        if not name.endswith(("weight_rho", "bias_rho")):
+            continue
+        reference = parameter
+        if parameter.grad is None:
+            continue
+        value = parameter.grad.detach().pow(2).sum()
+        squared_norm = value if squared_norm is None else squared_norm + value
+    if squared_norm is not None:
+        return squared_norm.sqrt()
+    if reference is not None:
+        return reference.new_tensor(0.0)
+    return torch.tensor(0.0)

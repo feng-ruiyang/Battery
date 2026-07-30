@@ -10,7 +10,13 @@ from torch.utils.data import DataLoader
 from battery_soh.data.torch_datasets import LatentCacheStore, LatentWindowDataset, load_split_ids
 from battery_soh.models.soh_predictor import SOHProbabilisticPredictor
 from battery_soh.training.checkpointing import save_checkpoint
-from battery_soh.training.trainer import evaluate_one_epoch, train_one_epoch
+from battery_soh.training.trainer import (
+    build_predictor_optimizer,
+    evaluate_one_epoch,
+    optimizer_learning_rates,
+    train_one_epoch,
+    vbll_posterior_metrics,
+)
 from battery_soh.utils.config import load_yaml
 from battery_soh.utils.device import resolve_device
 from battery_soh.utils.logging import build_metric_logger
@@ -100,10 +106,12 @@ def main() -> None:
     if len(train_loader.dataset) == 0:
         raise SystemExit("No latent training windows found. Build latent_cache and check window/horizon.")
     train_cfg = cfg.get("training", {})
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=float(train_cfg.get("lr", 1.0e-4)),
-        weight_decay=float(train_cfg.get("weight_decay", 0.0)),
+    optimizer = build_predictor_optimizer(model, cfg)
+    learning_rates = optimizer_learning_rates(optimizer)
+    print(
+        f"Optimizer learning rates: base={learning_rates['base']:.6g}, "
+        f"vbll_rho={learning_rates.get('vbll_rho', learning_rates['base']):.6g}",
+        flush=True,
     )
     output_dir = resolve_run_output_dir(cfg, "outputs/soh_predictor")
     print(f"Output dir: {output_dir}", flush=True)
@@ -165,16 +173,27 @@ def main() -> None:
             is_best = selection_value <= best_val
             if is_best:
                 best_val = selection_value
+            posterior_metrics = vbll_posterior_metrics(model)
+            learning_rates = optimizer_learning_rates(optimizer)
             metrics = {
                 "epoch": epoch,
                 **_prefix_metrics("train", train_result.metrics),
                 **_prefix_metrics("val", val_result.metrics),
                 **_prefix_metrics("val_rollout", val_rollout_result.metrics),
+                **_prefix_metrics("vbll", posterior_metrics),
+                "vbll/rho_grad_norm": train_result.metrics.get(
+                    "vbll_rho_grad_norm",
+                    0.0,
+                ),
                 "best/selection_metric": best_val,
                 "train/num_windows": len(train_loader.dataset),
                 "val/num_windows": len(val_loader.dataset) if val_loader is not None else 0,
                 "model/parameters": n_params,
-                "optim/lr": float(train_cfg.get("lr", 1.0e-4)),
+                "optim/lr": learning_rates["base"],
+                "optim/vbll_rho_lr": learning_rates.get(
+                    "vbll_rho",
+                    learning_rates["base"],
+                ),
                 "checkpoint/is_best": int(is_best),
             }
             logger.log(metrics)
@@ -185,7 +204,9 @@ def main() -> None:
                 f"val_rollout_crps="
                 f"{val_rollout_result.metrics.get('stochastic_rollout', 0.0):.6f} "
                 f"val_rollout_negative="
-                f"{val_rollout_result.metrics.get('stochastic_rollout_negative', 0.0):.6f}"
+                f"{val_rollout_result.metrics.get('stochastic_rollout_negative', 0.0):.6f} "
+                f"rho_grad={train_result.metrics.get('vbll_rho_grad_norm', 0.0):.6f} "
+                f"weight_std={posterior_metrics.get('weight_std_mean', 0.0):.6f}"
             )
             save_checkpoint(
                 output_dir / "last.pt",

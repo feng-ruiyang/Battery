@@ -11,8 +11,12 @@ from battery_soh.training.losses import (
     total_loss,
 )
 from battery_soh.training.trainer import (
+    build_predictor_optimizer,
+    optimizer_learning_rates,
     scheduled_sampling_probability,
     stochastic_rollout_settings,
+    vbll_posterior_metrics,
+    vbll_rho_grad_norm,
 )
 
 
@@ -71,6 +75,65 @@ def test_vbll_predictor_propagates_prior_standard_deviation() -> None:
     )
 
     assert model.decoder.vbll_head.prior_std == 0.5**0.5
+
+
+def test_vbll_rho_parameters_use_independent_learning_rate() -> None:
+    model = SOHProbabilisticPredictor.vbll(
+        latent_dim=4,
+        aux_dim=0,
+        horizon=3,
+        history_dim=8,
+        decoder_dim=8,
+    )
+    cfg = {
+        "training": {
+            "lr": 1.0e-4,
+            "weight_decay": 1.0e-5,
+            "vbll_rho_lr_multiplier": 5.0,
+        }
+    }
+
+    optimizer = build_predictor_optimizer(model, cfg)
+    learning_rates = optimizer_learning_rates(optimizer)
+    rho_parameter_ids = {
+        id(parameter)
+        for name, parameter in model.named_parameters()
+        if name.endswith(("weight_rho", "bias_rho"))
+    }
+    optimizer_rho_ids = {
+        id(parameter)
+        for group in optimizer.param_groups
+        if group.get("group_name") == "vbll_rho"
+        for parameter in group["params"]
+    }
+
+    assert learning_rates == {"base": 1.0e-4, "vbll_rho": 5.0e-4}
+    assert optimizer_rho_ids == rho_parameter_ids
+
+
+def test_vbll_posterior_metrics_and_gradient_norm_are_finite() -> None:
+    model = SOHProbabilisticPredictor.vbll(
+        latent_dim=4,
+        aux_dim=0,
+        horizon=3,
+        history_dim=8,
+        decoder_dim=8,
+    )
+    outputs = model(
+        z_window=torch.randn(2, 5, 4),
+        soh_history=torch.ones(2, 5),
+        soh_future=torch.full((2, 3), 0.9),
+    )
+    outputs["y_var"].mean().backward()
+
+    metrics = vbll_posterior_metrics(model)
+    grad_norm = vbll_rho_grad_norm(model)
+
+    assert metrics["weight_std_mean"] > 0.0
+    assert metrics["weight_std_max"] >= metrics["weight_std_mean"]
+    assert metrics["bias_std"] > 0.0
+    assert torch.isfinite(grad_norm)
+    assert grad_norm.item() > 0.0
 
 
 def test_vbll_rollout_can_use_posterior_mean_weights() -> None:
