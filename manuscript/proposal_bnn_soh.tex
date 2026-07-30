@@ -467,4 +467,93 @@ P6 & ensemble、Laplace、显式动力学对照 & 明确收益来源和计算代
 
 项目预期形成一套 BNN--Transformer 电池 SoH 概率轨迹预测系统，包括数据清洗与统一解析、cycle autoencoder、latent cache、Degeneration Transformer、VBLL 自回归采样、多步概率训练、校准评估和 RUL/EOL 后验分析。论文主张将以多随机种子、cell-level 测试和跨数据集实验为基础，不仅比较平均误差，也说明预测区间是否具有合理宽度、概率轨迹是否稳定，以及不确定性是否能够识别分布变化和潜在故障风险。
 
+\section{实验调参日志}
+
+本节记录 2026 年 7 月下旬围绕 NASA 数据进行的单 split 探索性调参结果。除特别说明外，测试集 split、latent cache、窗口 $W=30$、horizon $H=80$ 和 128 条 posterior sample rollout 保持一致。该日志用于追踪方法迭代，不作为最终统计结论；正式论文仍需补充多随机种子和统一评估脚本。
+
+\subsection{NASA encoder 与 latent cache}
+
+NASA 预处理最终采用标称容量归一化：
+\[
+\mathrm{SoH}_t=Q_t^{\mathrm{discharge}}/2\,\mathrm{Ah}.
+\]
+在 train-only \texttt{V/I/T} 标准化后，autoencoder 重构损失从未标准化时的量级 $\sim 2$--$6$ 降至 $\sim 0.05$。首轮标准化训练到 epoch 50 时：
+\[
+\mathcal L_{\mathrm{rec,train}}=0.04656,\qquad
+\mathcal L_{\mathrm{rec,val}}=0.04654.
+\]
+从该 checkpoint 以 $5\times10^{-5}$ 继续训练到 epoch 100 后，best validation reconstruction loss 进一步降至 $0.03386$，但 validation 曲线存在小幅波动。最终用于 NASA predictor 的 latent cache 包含 2750 个 cycle，latent dimension 为 128，所有 latent 与 SoH 均有限。
+
+\subsection{多步 rollout 训练策略}
+
+表 \ref{tab:nasa_rollout_ablation} 汇总了 NASA test split 上几个关键训练策略。``mean MAE'' 是 posterior-mean 权重 free-running 轨迹；``MC MAE''、CRPS 和区间宽度基于 posterior sample trajectories。coverage 在所有方案中偏高，说明主要问题不是漏覆盖，而是区间过宽和样本尾部越界。
+
+\begin{table}[h]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+方案 & mean & MC & CRPS & cov90 & wid90 & 越界 \\
+\midrule
+基础 VBLL rollout & 0.0870 & 0.1162 & 0.1197 & 0.9983 & 1.1655 & 0.1521 \\
+mean scheduled sampling & 0.0392 & 0.2439 & 0.1896 & 0.9995 & 1.9785 & 0.3781 \\
+stoch. CRPS, fixed $H=20$ & 0.0551 & 0.0638 & 0.0864 & 0.9971 & 0.9877 & 0.1054 \\
+linear hinge, fixed $H=20$ & 0.0506 & 0.0555 & 0.0842 & 0.9971 & 0.9323 & 0.1003 \\
+curriculum + linear hinge & 0.0955 & 0.0410 & 0.0771 & 0.9971 & 0.8305 & 0.0563 \\
+\bottomrule
+\end{tabular}
+\caption{NASA test split 上多步 stochastic rollout 训练策略的探索性结果。}
+\label{tab:nasa_rollout_ablation}
+\end{table}
+
+主要观察如下：
+\begin{itemize}
+  \item 仅 scheduled sampling 明显改善 posterior-mean 轨迹，但随机样本分布变坏，说明优化均值输入分布不能自动校准 VBLL posterior rollout。
+  \item 加入 stochastic CRPS 后，MC MAE 和 CRPS 显著改善，区间宽度从 1.1655 降至 0.9877，样本越界比例下降。
+  \item 线性负 SoH hinge 比平方 hinge 更有效，因为平方项在接近 0 的负值处梯度太弱。fixed $H=20$ 下 linear hinge 将 CRPS 从 0.0864 降至 0.0842，并将 90\% width 从 0.9877 降至 0.9323。
+  \item horizon curriculum 将训练 rollout 从 20/40/80 逐步加长，使 MC MAE 降至 0.0410、CRPS 降至 0.0771、width 降至 0.8305，并显著降低负尾部；但 posterior-mean MAE 变差。这说明当前最终报告应优先使用 posterior sample-mean 和概率指标，而不是只看 posterior-mean 权重轨迹。
+\end{itemize}
+
+\subsection{负 SoH 尾部分析}
+
+fixed $H=20$ + linear hinge 后，完整 test sample tensor 中负值比例约为 10.03\%，1\% 分位数为 $-0.1979$，最小值约为 $-0.3710$。按 horizon 分解，在可以覆盖到 $H=80$ 的 cohort 中，负样本主要出现在长期 horizon：$H=80$ 时负值比例约 24.02\%、1\% 分位数约 $-0.2075$。
+
+加入 horizon curriculum 后，整体负值比例降至 5.63\%，完整 $H=80$ cohort 上的负值比例降至 2.66\%，1\% 分位数提升到 $-0.0431$，最小值约 $-0.1096$。这表明 curriculum 对长期尾部稳定性有效，但代价是 posterior-mean path 不再是最佳点预测代表。
+
+\subsection{KL、prior variance 与 VBLL posterior scale}
+
+围绕 VBLL posterior scale 的调参结果表明，当前不确定性主要不受 prior variance 单独控制。将 $\beta_{\mathrm{KL}}$ 从 $10^{-4}$ 改到 $10^{-5}$ 后，VBLL posterior 的权重均值和标准差几乎不变：
+\[
+|\mu_W|_{\mathrm{mean}}\approx 0.029,\qquad
+\sigma_W^{\mathrm{mean}}\approx 0.0066,
+\]
+weight KL 仍约为 $1155$--$1161$。在 scheduled sampling 配置下，$\beta_{\mathrm{KL}}=10^{-5}$ 的 validation rollout 指标与 $\beta_{\mathrm{KL}}=10^{-4}$ 几乎相同，因此降低 KL 系数不是当前有效的校准杠杆。
+
+进一步将 prior variance 从 $0.5$ 降至 $0.01$ 后，validation 指标仍基本不变：
+\[
+\mathrm{CRPS}: 0.10401\rightarrow 0.10410,\qquad
+90\%\ \mathrm{width}: 0.83908\rightarrow 0.83250,
+\]
+weight posterior std mean 仍约为 $0.00653$。这说明在当前初始化和损失权重下，$\rho$ 参数接近初始化尺度，prior variance 本身没有足够影响 posterior spread。
+
+因此后续实现了两类更直接的 posterior scale 调整：
+\begin{itemize}
+  \item 为 VBLL 的 \texttt{weight\_rho}/\texttt{bias\_rho} 设置独立学习率倍率，当前有 $5\times$ 配置；
+  \item 新增 \texttt{vbll\_init\_rho} 消融，包括 $-6.0$ 与 $-5.5$ 等初始 posterior std 设定。
+\end{itemize}
+这些 run 已接入 W\&B posterior/gradient 监控，但最终 validation/test 聚合指标仍需在同一脚本下汇总后再写入表格。
+
+\subsection{当前决策}
+
+基于上述日志，NASA 后续默认路线为：
+\begin{itemize}
+  \item 保持 VBLL prior variance $0.5$ 和 $\beta_{\mathrm{KL}}=10^{-4}$；
+  \item 使用 scheduled sampling 上限 $0.25$；
+  \item 使用 stochastic CRPS + linear negative hinge；
+  \item 使用 20/40/80 horizon curriculum 作为当前概率指标最优路线；
+  \item 将 posterior-mean 轨迹、MC sample-mean 轨迹和 CRPS 分开报告；
+  \item 对 $\rho$ 独立学习率和 \texttt{init\_rho} 消融只在完成统一聚合后再形成结论。
+\end{itemize}
+
 \end{document}
