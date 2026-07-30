@@ -1,0 +1,18 @@
+dataset: calce
+raw_dir: ~/data/calce/raw/cs2
+output_dir: ~/data/calce/processed
+max_cells: null
+nominal_capacity_ah: 1.1
+cell_pattern: 'CS2[_-](33|34|35|36|37|38)'
+filters:
+  min_q_ah: 0.03
+  max_charge_discharge_mismatch: 0.25
+  min_voltage_max_v: 4.0
+  max_voltage_min_v: 2.9
+  min_points: 50
+  local_outlier_window: 3
+  local_outlier_drop: 0.08
+splits:
+  seed: 42
+  train_ratio: 0.7
+  val_ratio: 0.15

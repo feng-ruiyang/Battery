@@ -9,6 +9,7 @@ dependencies:
   - numpy
   - scipy
   - pandas
+  - openpyxl
   - pyarrow
   - pyyaml
   - tqdm
@@ -19,4 +20,3 @@ dependencies:
       - lightning
       - wandb
       - ruff
-
