@@ -1,0 +1,67 @@
+experiment:
+  name: calce_cs2_latent_tf_vbll
+  seed: 42
+  output_dir: outputs/calce_cs2_latent_tf_vbll
+  timestamped_output: true
+
+data:
+  processed_dir: ~/data/calce/processed
+  split_file: ~/data/calce/processed/splits/cell_random_seed_42.jsonl
+  latent_cache: ~/data/calce/processed/latents.npz
+  window: 30
+  horizon: 80
+  latent_dim: 128
+  aux_dim: 0
+
+model:
+  kind: latent_tf_vbll
+  history_dim: 256
+  decoder_dim: 256
+  vbll_prior_variance: 0.5
+
+training:
+  objective: nll
+  batch_size: 64
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  log_every_n_steps: 10
+  max_epochs: 100
+  lr: 1.0e-4
+  weight_decay: 1.0e-5
+  beta_kl: 1.0e-4
+  lambda_state: 1.0
+  lambda_negative: 0.0
+  lambda_smooth: 0.0
+  scheduled_sampling:
+    enabled: true
+    start_epoch: 10
+    end_epoch: 40
+    start_probability: 0.0
+    end_probability: 0.25
+    validation_probability: 1.0
+  stochastic_rollout:
+    enabled: true
+    start_epoch: 10
+    horizon: 80
+    horizon_schedule:
+      - start_epoch: 10
+        horizon: 20
+      - start_epoch: 30
+        horizon: 40
+      - start_epoch: 50
+        horizon: 80
+    num_samples: 4
+    validation_num_samples: 8
+    validation_horizon: 80
+    validation_seed: 42
+    weight: 0.1
+    negative_weight: 0.1
+    objective: crps
+  device: auto
+
+logging:
+  backend: wandb
+  project: battery-soh-bnn
+  offline: false
