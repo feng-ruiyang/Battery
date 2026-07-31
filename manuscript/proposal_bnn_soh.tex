@@ -320,9 +320,9 @@ python scripts/evaluate.py \
   --num-samples 128 --save-samples
 \end{verbatim}
 
-\subsection{CALCE-CS2 跨协议实验}
+\subsection{CALCE-CS2 混合协议实验}
 
-为检验模型在同类型电池、不同循环协议之间的泛化能力，当前新增 CALCE CS2 数据处理流程。CS2 为 $1.1\,\mathrm{Ah}$ LiCoO$_2$ prismatic cell。第一版只纳入 \texttt{CS2\_33--CS2\_38}，避免把 partial cycling、随机截止电压或其他复杂协议混入同一实验。
+为检验模型在同类型电池、不同循环协议之间的泛化能力，当前新增 CALCE CS2 数据处理流程。CS2 为 $1.1\,\mathrm{Ah}$ LiCoO$_2$ prismatic cell。第一版只纳入 \texttt{CS2\_33--CS2\_38}，避免把 partial cycling、随机截止电压或其他复杂协议混入同一实验。需要注意的是，当前 seed 42 split 并不是严格跨协议测试，而是 cross-cell 加 mixed-protocol 训练后的 held-out cell 测试。
 
 CALCE Excel 日志中的 \texttt{Charge\_Capacity(Ah)} 和 \texttt{Discharge\_Capacity(Ah)} 在每个 Excel 文件内是累计容量，因此单个 cycle 的容量不能直接取该列最大值，而应按：
 \[
@@ -345,7 +345,7 @@ SoH 使用标称容量定义：
 \mathrm{val}=\{\mathrm{CS2\_33}\},\quad
 \mathrm{test}=\{\mathrm{CS2\_38}\}.
 \]
-其中 \texttt{CS2\_33/34} 近似为 0.5C 组，\texttt{CS2\_35--38} 近似为 1C 组，因此该 split 用于第一轮跨协议探索；后续将额外构造严格同协议 split 做微调和对照。
+其中 \texttt{CS2\_33/34} 近似为 0.5C 组，\texttt{CS2\_35--38} 近似为 1C 组。由于 test cell \texttt{CS2\_38} 与训练集中的 \texttt{CS2\_35--37} 同属 1C 组，当前 split 更适合作为混合协议训练后的 cross-cell 探索；下一轮将构造 \texttt{CS2\_35/36/37} 训练、\texttt{CS2\_38} 测试的同协议 1C 对照。
 
 CALCE 缺少温度通道，因此 cycle encoder 使用 \texttt{V/I} 两通道。训练 cell 上拟合的标准化统计为：
 \[
@@ -421,13 +421,13 @@ sample negative / $>1.2$ & 0.4657\% / 0.0018\% \\
 sample q01 / q50 / q99 & 0.0463 / 0.7387 / 1.1048 \\
 \bottomrule
 \end{tabular}
-\caption{CALCE-CS2 首轮 cross-protocol test，使用 128 条 posterior sample trajectories。}
+\caption{CALCE-CS2 首轮 mixed-protocol held-out cell test，使用 128 条 posterior sample trajectories。}
 \label{tab:calce_predictor_test}
 \end{table}
 
 与 NASA test 上常见的过宽区间不同，CALCE 首轮结果的 90\% coverage 为 0.9298，区间宽度为 0.6186，说明不确定性不再明显过度保守。MC sample-mean 也优于 posterior-mean 权重轨迹，表明当前随机 rollout 训练在 CALCE 上更适合作为点预测代表。不过该 split 的 test cell \texttt{CS2\_38} 与训练集中的 \texttt{CS2\_35--37} 同属近似 1C 组，因此它更接近 cross-cell 加混合协议泛化，而不是最严格的 out-of-distribution 测试。
 
-表 \ref{tab:nasa_calce_summary} 给出当前 NASA 与 CALCE 两条实验线的汇报用对比。NASA 行采用当前概率指标最优的 curriculum + linear hinge 配置；CALCE 行采用首轮 cross-protocol predictor 的 \texttt{CS2\_38} test 结果。两者均为单 split 探索性结果，不能直接作为最终统计结论。
+表 \ref{tab:nasa_calce_summary} 给出当前 NASA 与 CALCE 两条实验线的汇报用对比。NASA 行采用当前概率指标最优的 curriculum + linear hinge 配置；CALCE 行采用首轮 mixed-protocol held-out cell predictor 的 \texttt{CS2\_38} test 结果。两者均为单 split 探索性结果，不能直接作为最终统计结论。
 
 \begin{table}[h]
 \centering
@@ -443,7 +443,7 @@ sample q01 / q50 / q99 & 0.0463 / 0.7387 / 1.1048 \\
 cell split & train/val/test = 24/5/5 & train/val/test = 4/1/1；test=\texttt{CS2\_38} \\
 cycle encoder 输入 & \texttt{V/I/T}，sequence length 1000，latent dim 128 & \texttt{V/I}，sequence length 1000，latent dim 128 \\
 autoencoder best val MSE & 0.0339 & 0.0305 \\
-predictor 配置 & stochastic CRPS + linear negative hinge + 20/40/80 horizon curriculum & 同一 VBLL rollout 框架，首轮 cross-protocol predictor \\
+predictor 配置 & stochastic CRPS + linear negative hinge + 20/40/80 horizon curriculum & 同一 VBLL rollout 框架，首轮 mixed-protocol held-out cell predictor \\
 posterior-mean MAE/RMSE & 0.0955 / -- & 0.1227 / 0.2081 \\
 MC sample-mean MAE/RMSE & 0.0410 / -- & 0.1108 / 0.1841 \\
 CRPS & 0.0771 & 0.0922 \\
@@ -467,8 +467,8 @@ sample negative / upper out-of-range & 5.63\% / -- & 0.4657\% / 0.0018\% \\
   \item 不同 $\beta_{\mathrm{KL}}$、prior variance、rollout horizon 和样本数量；
   \item 有无 latent next-step 辅助损失；
   \item best checkpoint 与 last checkpoint；
-  \item NASA 同分布测试、CALCE 跨协议测试与 Severson/HUST 跨数据集测试；
-  \item CALCE-CS2 跨协议训练与严格同协议微调；
+  \item NASA 同分布测试、CALCE 同协议/协议偏移测试与 Severson/HUST 跨数据集测试；
+  \item CALCE-CS2 同协议 held-out cell、协议偏移与少量 target-protocol 微调；
   \item 后续加入 MC Dropout、Deep Ensemble、Last-layer Laplace 和显式退化动力学。
 \end{itemize}
 
@@ -641,6 +641,34 @@ $\rho$ 学习率改善了 proper score，却同时造成少数 posterior weight
 0.1530 和 0.1263，表明该设置通过压缩分布牺牲了拟合质量。三组
 posterior-scale 调整均只使用 validation split 比较，没有继续使用
 test split 选择超参数。
+
+\subsection{CALCE-CS2 当前数据使用记录}
+
+当前 CALCE 首轮实验使用 \texttt{CS2\_33}--\texttt{CS2\_38} 六个 cell。
+根据 CALCE 官方测试说明，\texttt{CS2\_33} 和 \texttt{CS2\_34} 为
+0.5C constant-current discharge，\texttt{CS2\_35}--\texttt{CS2\_38} 为
+1C constant-current discharge。
+本轮 seed 42 split 为：
+\[
+\mathrm{train}=\{\mathrm{CS2\_34,CS2\_35,CS2\_36,CS2\_37}\},\quad
+\mathrm{val}=\{\mathrm{CS2\_33}\},\quad
+\mathrm{test}=\{\mathrm{CS2\_38}\}.
+\]
+因此本轮不能表述为严格跨协议测试；它实际是 mixed-protocol training
+后的 held-out cell 测试，其中 test cell \texttt{CS2\_38} 与训练集中的
+\texttt{CS2\_35--37} 同属 1C 协议。该结果仍有价值，因为它表明在更干净的
+CALCE-CS2 标签上，posterior rollout 的 coverage、width 和负值尾部比
+NASA 更健康；但它不能证明模型已经解决 protocol shift。
+
+下一轮 CALCE 实验将先跑严格同协议 1C 对照：
+\[
+\mathrm{train}=\{\mathrm{CS2\_35,CS2\_36,CS2\_37}\},\qquad
+\mathrm{test}=\{\mathrm{CS2\_38}\}.
+\]
+该设置更接近 BMS 中同类电池、同一使用协议下的 held-out cell 验证。完成后再考虑
+\texttt{CS2\_33/34} 与 \texttt{CS2\_35--38} 之间的协议偏移实验，或使用
+\texttt{CS2\_3/9} 这类同一 cell 内交替 discharge current 的数据来检验
+operational protocol shift 下的不确定性响应。
 
 \subsection{当前决策}
 
