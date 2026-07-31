@@ -352,7 +352,7 @@ CALCE 缺少温度通道，因此 cycle encoder 使用 \texttt{V/I} 两通道。
 \mu_V=3.8571,\quad \sigma_V=0.2740,\qquad
 \mu_I=-0.0338,\quad \sigma_I=0.7220.
 \]
-CALCE autoencoder 使用与 NASA 相同的 latent dimension 128、sequence length 1000 和时间戳 checkpoint 机制。当前 run 在 epoch 47 early stopping；最低 validation reconstruction MSE 约为 0.0305，latent cache 形状为 $(5430,128)$，latent 均值为 $-0.0707$、标准差为 $0.4186$，所有 latent 与 SoH 均为有限值。CALCE predictor 训练正在进行中，因此本文档暂不写入其结论性指标。
+CALCE autoencoder 使用与 NASA 相同的 latent dimension 128、sequence length 1000 和时间戳 checkpoint 机制。当前 run 在 epoch 47 early stopping；最低 validation reconstruction MSE 约为 0.0305，latent cache 形状为 $(5430,128)$，latent 均值为 $-0.0707$、标准差为 $0.4186$，所有 latent 与 SoH 均为有限值。首轮 CALCE predictor 已完成 test cell \texttt{CS2\_38} 的 128 条 posterior rollout 评估，MC sample-mean MAE/RMSE 为 0.1108/0.1841，CRPS 为 0.0922，90\% prediction interval coverage/width 为 0.9298/0.6186。
 
 \subsection{初步 NASA 实验观察}
 
@@ -372,11 +372,11 @@ scheduled sampling + stochastic CRPS & 0.0551 & 0.0638 & 0.0864 & 0.9877 & 0.105
 \end{tabular}
 \end{table}
 
-结果表明，scheduled sampling 可以改善 posterior-mean 轨迹，但若不直接训练随机 rollout，VBLL 样本会明显发散；加入 stochastic CRPS 后，MC MAE、CRPS、区间宽度和早期口径下的越界比例均改善。平方负值惩罚实验在有效 mask 位置上的负样本比例约为 11.12\%，尚未显示出明显改善；由于早期基线的 10.49\% 是未应用 mask 的统计，最终结论必须先按统一口径重算。线性 hinge 已接入代码，效果同样需要完成同协议评估后再写入结论。
+结果表明，scheduled sampling 可以改善 posterior-mean 轨迹，但若不直接训练随机 rollout，VBLL 样本会明显发散；加入 stochastic CRPS 后，MC MAE、CRPS、区间宽度和早期口径下的越界比例均改善。平方负值惩罚实验在有效 mask 位置上的负样本比例约为 11.12\%，未显示出明显改善。后续统一口径实验表明，线性 hinge 配合 rollout horizon curriculum 可将 test MC MAE 和 CRPS 分别降至 0.0410 和 0.0771，详细结果见附录实验日志。
 
 \subsection{CALCE 已完成结果}
 
-CALCE 当前完成到 encoder 和 latent cache 阶段。表 \ref{tab:calce_pretrain} 总结了已确认的中间结果。由于 predictor 仍在运行，CALCE 的概率 rollout、CRPS 和 coverage 暂不纳入结论。
+CALCE 当前完成到 encoder、latent cache 和第一轮 predictor 阶段。表 \ref{tab:calce_pretrain} 总结了已确认的中间结果；表 \ref{tab:calce_predictor_test} 汇总了 test cell \texttt{CS2\_38} 上的概率 rollout 指标。该结果仍是单 split 探索性实验，后续需要补充严格同协议 split 和多随机种子。
 
 \begin{table}[h]
 \centering
@@ -400,6 +400,32 @@ SoH range & $0.0669$--$1.0561$ \\
 \caption{CALCE-CS2 当前预处理、标准化、autoencoder 与 latent cache 结果。}
 \label{tab:calce_pretrain}
 \end{table}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lr}
+\toprule
+指标 & \texttt{CS2\_38} test结果 \\
+\midrule
+selected checkpoint & best \\
+posterior-mean MAE / RMSE & 0.1227 / 0.2081 \\
+MC sample-mean MAE / RMSE & 0.1108 / 0.1841 \\
+CRPS & 0.0922 \\
+50\% PI coverage / width & 0.9138 / 0.2617 \\
+80\% PI coverage / width & 0.9175 / 0.4796 \\
+90\% PI coverage / width & 0.9298 / 0.6186 \\
+95\% PI coverage / width & 0.9427 / 0.7239 \\
+monotonic violation rate & 0.2521 \\
+sample negative / $>1.2$ & 0.4657\% / 0.0018\% \\
+sample q01 / q50 / q99 & 0.0463 / 0.7387 / 1.1048 \\
+\bottomrule
+\end{tabular}
+\caption{CALCE-CS2 首轮 cross-protocol test，使用 128 条 posterior sample trajectories。}
+\label{tab:calce_predictor_test}
+\end{table}
+
+与 NASA test 上常见的过宽区间不同，CALCE 首轮结果的 90\% coverage 为 0.9298，区间宽度为 0.6186，说明不确定性不再明显过度保守。MC sample-mean 也优于 posterior-mean 权重轨迹，表明当前随机 rollout 训练在 CALCE 上更适合作为点预测代表。不过该 split 的 test cell \texttt{CS2\_38} 与训练集中的 \texttt{CS2\_35--37} 同属近似 1C 组，因此它更接近 cross-cell 加混合协议泛化，而不是最严格的 out-of-distribution 测试。
 
 \subsection{基线与消融}
 
@@ -467,6 +493,7 @@ P6 & ensemble、Laplace、显式动力学对照 & 明确收益来源和计算代
 
 项目预期形成一套 BNN--Transformer 电池 SoH 概率轨迹预测系统，包括数据清洗与统一解析、cycle autoencoder、latent cache、Degeneration Transformer、VBLL 自回归采样、多步概率训练、校准评估和 RUL/EOL 后验分析。论文主张将以多随机种子、cell-level 测试和跨数据集实验为基础，不仅比较平均误差，也说明预测区间是否具有合理宽度、概率轨迹是否稳定，以及不确定性是否能够识别分布变化和潜在故障风险。
 
+\appendix
 \section{实验调参日志}
 
 本节记录 2026 年 7 月下旬围绕 NASA 数据进行的单 split 探索性调参结果。除特别说明外，测试集 split、latent cache、窗口 $W=30$、horizon $H=80$ 和 128 条 posterior sample rollout 保持一致。该日志用于追踪方法迭代，不作为最终统计结论；正式论文仍需补充多随机种子和统一评估脚本。
@@ -537,12 +564,54 @@ weight KL 仍约为 $1155$--$1161$。在 scheduled sampling 配置下，$\beta_{
 \]
 weight posterior std mean 仍约为 $0.00653$。这说明在当前初始化和损失权重下，$\rho$ 参数接近初始化尺度，prior variance 本身没有足够影响 posterior spread。
 
-因此后续实现了两类更直接的 posterior scale 调整：
-\begin{itemize}
-  \item 为 VBLL 的 \texttt{weight\_rho}/\texttt{bias\_rho} 设置独立学习率倍率，当前有 $5\times$ 配置；
-  \item 新增 \texttt{vbll\_init\_rho} 消融，包括 $-6.0$ 与 $-5.5$ 等初始 posterior std 设定。
-\end{itemize}
-这些 run 已接入 W\&B posterior/gradient 监控，但最终 validation/test 聚合指标仍需在同一脚本下汇总后再写入表格。
+因此后续实现了两类更直接的 posterior scale 调整：为 VBLL 的
+\texttt{weight\_rho}/\texttt{bias\_rho} 设置独立学习率倍率，以及显式配置
+\texttt{vbll\_init\_rho}。表 \ref{tab:nasa_rho_ablation} 汇总了已完成 run
+在 NASA validation split 上的统一 128 轨迹评估。这里的负值比例只统计
+有效 mask 位置，$H80$ 指标只统计具有完整 80 步未来标签的 cohort。
+
+\begin{table}[h]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lrrrrrrrrrr}
+\toprule
+配置 & mean & MC & CRPS & cov50 & cov90 & wid90 & neg.\% & $H80$ neg.\% & $H80$ std & $H80$ q01 \\
+\midrule
+$\rho_0=-5,\ \eta_\rho=1\times$
+& 0.1340 & 0.1044 & 0.1040 & 0.8781 & 0.9759 & 0.8391 & 6.662 & 1.094 & 0.2519 & $-0.0047$ \\
+$\rho_0=-5,\ \eta_\rho=5\times$
+& 0.0932 & 0.1097 & 0.0890 & 0.8615 & 0.9790 & 0.7223 & 7.299 & 5.562 & 0.2449 & $-0.1979$ \\
+$\rho_0=-5.5,\ \eta_\rho=5\times$
+& 0.1241 & 0.1066 & 0.1043 & 0.8578 & 0.9632 & 0.9086 & 6.174 & 0.906 & 0.2666 & 0.0037 \\
+$\rho_0=-6,\ \eta_\rho=5\times$
+& 0.1595 & 0.1530 & 0.1263 & 0.6101 & 0.9373 & 0.7468 & 9.937 & 0.844 & 0.2076 & 0.2266 \\
+\bottomrule
+\end{tabular}
+\caption{NASA validation split 上 VBLL posterior 初始化与 $\rho$ 学习率消融。}
+\label{tab:nasa_rho_ablation}
+\end{table}
+
+$5\times$ 的 $\rho$ 学习率使参数确实发生更新：在
+$\rho_0=-5$ 的 best checkpoint 中，weight posterior std mean 从约
+$0.00653$ 变为 $0.00627$，std max 从约 $0.00705$ 增至 $0.01513$。
+对应 CRPS 从 0.1040 降至 0.0890、90\% width 从 0.8391 降至
+0.7223，但 MC MAE、整体负值比例和 $H80$ 负尾部变差。说明更大的
+$\rho$ 学习率改善了 proper score，却同时造成少数 posterior weight
+尺度扩张，不能单独视为校准改善。
+
+中点初始化 $\rho_0=-5.5$ 保留了较稳定的长期左尾：$H80$ 负值比例为
+0.906\%，1\% 分位数为 0.0037；cov50/cov90 也从默认配置的
+0.8781/0.9759 降至 0.8578/0.9632。但 MC MAE 和 CRPS 没有改善，
+90\% width 反而从 0.8391 增至 0.9086，$H80$ std 也增至 0.2666。
+因此该结果不是 $\rho_0=-5$ 与 $-6$ 之间的单调插值，也没有同时满足
+校准、proper score 和长期稳定性的选择标准。
+
+将初始化进一步改为 $\rho_0=-6$ 后，50\%/90\% coverage 降至
+0.6101/0.9373，长期方差和负尾部也减小；但 MC MAE 和 CRPS 分别恶化到
+0.1530 和 0.1263，表明该设置通过压缩分布牺牲了拟合质量。三组
+posterior-scale 调整均只使用 validation split 比较，没有继续使用
+test split 选择超参数。
 
 \subsection{当前决策}
 
@@ -553,7 +622,7 @@ weight posterior std mean 仍约为 $0.00653$。这说明在当前初始化和�
   \item 使用 stochastic CRPS + linear negative hinge；
   \item 使用 20/40/80 horizon curriculum 作为当前概率指标最优路线；
   \item 将 posterior-mean 轨迹、MC sample-mean 轨迹和 CRPS 分开报告；
-  \item 对 $\rho$ 独立学习率和 \texttt{init\_rho} 消融只在完成统一聚合后再形成结论。
+  \item 当前主配置保留 $\rho_0=-5,\eta_\rho=1\times$；$\rho_0=-5.5$ 和 $-6$ 均不采用，$\rho_0=-5,\eta_\rho=5\times$ 仅保留为 CRPS 与长期负尾部之间的 validation trade-off。
 \end{itemize}
 
 \end{document}
