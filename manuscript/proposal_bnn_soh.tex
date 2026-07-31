@@ -427,6 +427,35 @@ sample q01 / q50 / q99 & 0.0463 / 0.7387 / 1.1048 \\
 
 与 NASA test 上常见的过宽区间不同，CALCE 首轮结果的 90\% coverage 为 0.9298，区间宽度为 0.6186，说明不确定性不再明显过度保守。MC sample-mean 也优于 posterior-mean 权重轨迹，表明当前随机 rollout 训练在 CALCE 上更适合作为点预测代表。不过该 split 的 test cell \texttt{CS2\_38} 与训练集中的 \texttt{CS2\_35--37} 同属近似 1C 组，因此它更接近 cross-cell 加混合协议泛化，而不是最严格的 out-of-distribution 测试。
 
+表 \ref{tab:nasa_calce_summary} 给出当前 NASA 与 CALCE 两条实验线的汇报用对比。NASA 行采用当前概率指标最优的 curriculum + linear hinge 配置；CALCE 行采用首轮 cross-protocol predictor 的 \texttt{CS2\_38} test 结果。两者均为单 split 探索性结果，不能直接作为最终统计结论。
+
+\begin{table}[h]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{0.27\linewidth}p{0.31\linewidth}p{0.31\linewidth}}
+\toprule
+项目 & NASA & CALCE-CS2 \\
+\midrule
+实验角色 & 当前主训练集；用于调试多步 stochastic rollout、负值约束和 VBLL posterior scale & 跨 cell/混合协议泛化验证；用于观察不确定性在新数据集上的表现 \\
+电池与容量定义 & Ames aging cells；SoH=$Q^{\mathrm{discharge}}/2\,\mathrm{Ah}$ & CS2 LiCoO$_2$ prismatic cells；SoH=$Q^{\mathrm{discharge}}/1.1\,\mathrm{Ah}$ \\
+有效数据规模 & 34 cells，2750 个有限 SoH discharge cycles & 6 cells，5430 个有效 cycles \\
+cell split & train/val/test = 24/5/5 & train/val/test = 4/1/1；test=\texttt{CS2\_38} \\
+cycle encoder 输入 & \texttt{V/I/T}，sequence length 1000，latent dim 128 & \texttt{V/I}，sequence length 1000，latent dim 128 \\
+autoencoder best val MSE & 0.0339 & 0.0305 \\
+predictor 配置 & stochastic CRPS + linear negative hinge + 20/40/80 horizon curriculum & 同一 VBLL rollout 框架，首轮 cross-protocol predictor \\
+posterior-mean MAE/RMSE & 0.0955 / -- & 0.1227 / 0.2081 \\
+MC sample-mean MAE/RMSE & 0.0410 / -- & 0.1108 / 0.1841 \\
+CRPS & 0.0771 & 0.0922 \\
+90\% PI coverage / width & 0.9971 / 0.8305 & 0.9298 / 0.6186 \\
+sample negative / upper out-of-range & 5.63\% / -- & 0.4657\% / 0.0018\% \\
+当前观察 & MC 误差和 CRPS 最优，但 coverage 仍偏高，说明区间仍偏保守 & coverage 更接近目标，区间更窄，负尾部明显更健康 \\
+\bottomrule
+\end{tabular}
+\caption{NASA 与 CALCE-CS2 当前实验线的汇报用对比。}
+\label{tab:nasa_calce_summary}
+\end{table}
+
 \subsection{基线与消融}
 
 为了区分改进来源，后续实验按相同 latent cache 和相同 cell split 比较：
