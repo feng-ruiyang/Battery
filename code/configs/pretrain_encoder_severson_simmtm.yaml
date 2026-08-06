@@ -1,0 +1,58 @@
+experiment:
+  name: severson_simmtm_cycle_autoencoder
+  seed: 42
+  output_dir: outputs/severson_simmtm_cycle_autoencoder
+  timestamped_output: true
+
+data:
+  processed_dir: ~/data/severson-2019/processed
+  split_file: ~/data/severson-2019/processed/splits/cell_random_seed_42.jsonl
+  latent_cache: ~/data/severson-2019/processed/latents_simmtm.npz
+  normalizer: ~/data/severson-2019/processed/normalization/train_vit_seed_42.json
+  channels:
+    - V
+    - I
+    - T
+  sequence_length: 1000
+
+model:
+  input_dim: 3
+  latent_dim: 128
+  d_model: 128
+  num_layers: 3
+  num_heads: 4
+
+training:
+  batch_size: 128
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+  log_every_n_steps: 50
+  max_epochs: 100
+  lr: 1.0e-4
+  resume_lr: 5.0e-5
+  weight_decay: 1.0e-5
+  masked_pretraining:
+    num_views: 3
+    mask_ratio: 0.5
+    block_length: 8
+    contrastive_weight: 0.1
+    temperature: 0.2
+  scheduler:
+    enabled: true
+    name: reduce_on_plateau
+    factor: 0.5
+    patience: 4
+    threshold: 1.0e-4
+    min_lr: 1.0e-6
+  early_stopping:
+    enabled: true
+    patience: 12
+    min_delta: 1.0e-5
+  device: auto
+
+logging:
+  backend: wandb
+  project: battery-soh-bnn
+  offline: false
