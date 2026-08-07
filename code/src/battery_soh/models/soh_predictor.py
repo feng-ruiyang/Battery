@@ -88,6 +88,7 @@ class SOHProbabilisticPredictor(nn.Module):
         scheduled_sampling_probability: float = 0.0,
         stochastic_rollout_num_samples: int = 0,
         stochastic_rollout_horizon: int = 0,
+        stochastic_rollout_prefix_mode: str = "generated",
     ) -> dict:
         state_outputs = self.state_model(z_window=z_window, u_window=u_window, mask=history_mask)
         state = state_outputs["state"]
@@ -129,12 +130,36 @@ class SOHProbabilisticPredictor(nn.Module):
                 num_samples=num_samples,
             )
         if stochastic_rollout_num_samples > 0:
-            outputs["stochastic_rollout_samples"] = self.decoder.stochastic_rollout(
-                state=state,
-                start_soh=soh_history[:, -1],
-                num_samples=stochastic_rollout_num_samples,
-                horizon=stochastic_rollout_horizon,
-            )
+            if stochastic_rollout_prefix_mode == "generated":
+                outputs["stochastic_rollout_samples"] = self.decoder.stochastic_rollout(
+                    state=state,
+                    start_soh=soh_history[:, -1],
+                    num_samples=stochastic_rollout_num_samples,
+                    horizon=stochastic_rollout_horizon,
+                )
+            elif stochastic_rollout_prefix_mode == "teacher_forced":
+                if soh_future is None:
+                    raise ValueError(
+                        "teacher_forced stochastic rollout requires soh_future."
+                    )
+                teacher_forced_inputs = make_teacher_forcing_inputs(
+                    soh_history=soh_history,
+                    soh_future=soh_future,
+                )
+                outputs[
+                    "stochastic_rollout_samples"
+                ] = self.decoder.teacher_forced_stochastic_samples(
+                    state=state,
+                    decoder_inputs=teacher_forced_inputs,
+                    num_samples=stochastic_rollout_num_samples,
+                    horizon=stochastic_rollout_horizon,
+                )
+            else:
+                raise ValueError(
+                    "stochastic_rollout_prefix_mode must be "
+                    "'generated' or 'teacher_forced', got "
+                    f"{stochastic_rollout_prefix_mode!r}."
+                )
         return outputs
 
 

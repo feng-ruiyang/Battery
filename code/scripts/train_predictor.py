@@ -14,6 +14,7 @@ from battery_soh.training.trainer import (
     build_predictor_optimizer,
     evaluate_one_epoch,
     optimizer_learning_rates,
+    stochastic_rollout_prefix_mode,
     train_one_epoch,
     vbll_posterior_metrics,
 )
@@ -143,6 +144,7 @@ def main() -> None:
         else 0
     )
     validation_seed = int(rollout_cfg.get("validation_seed", 42))
+    validation_prefix_mode = stochastic_rollout_prefix_mode(cfg)
     rollout_negative_weight = float(rollout_cfg.get("negative_weight", 0.0))
     if args.resume is not None:
         resume_path = args.resume.expanduser()
@@ -181,6 +183,7 @@ def main() -> None:
                     probability=val_sampling_probability,
                     stochastic_num_samples=validation_rollout_samples,
                     stochastic_horizon=validation_rollout_horizon,
+                    stochastic_prefix_mode=validation_prefix_mode,
                     seed=validation_seed,
                 )
                 if val_loader
@@ -371,6 +374,7 @@ def _forward_with_sampling(
     probability: float,
     stochastic_num_samples: int = 0,
     stochastic_horizon: int = 0,
+    stochastic_prefix_mode: str = "generated",
 ) -> dict:
     return model(
         z_window=batch["z_window"],
@@ -381,6 +385,7 @@ def _forward_with_sampling(
         scheduled_sampling_probability=probability,
         stochastic_rollout_num_samples=stochastic_num_samples,
         stochastic_rollout_horizon=stochastic_horizon,
+        stochastic_rollout_prefix_mode=stochastic_prefix_mode,
     )
 
 
@@ -392,6 +397,7 @@ def _evaluate_rollout_validation(
     probability: float,
     stochastic_num_samples: int,
     stochastic_horizon: int,
+    stochastic_prefix_mode: str,
     seed: int,
 ):
     cuda_devices = []
@@ -412,6 +418,7 @@ def _evaluate_rollout_validation(
                 probability=probability,
                 stochastic_num_samples=stochastic_num_samples,
                 stochastic_horizon=stochastic_horizon,
+                stochastic_prefix_mode=stochastic_prefix_mode,
             ),
         )
 

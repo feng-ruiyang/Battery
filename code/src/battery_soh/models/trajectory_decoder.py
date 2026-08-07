@@ -114,6 +114,57 @@ class TeacherForcingTrajectoryDecoder(nn.Module):
             use_mean=False,
         )
 
+    def teacher_forced_stochastic_samples(
+        self,
+        state: Tensor,
+        decoder_inputs: Tensor,
+        num_samples: int,
+        horizon: int,
+    ) -> Tensor:
+        """Differentiable samples using true autoregressive prefixes.
+
+        This keeps the prefix regime teacher-forced while still sampling the
+        VBLL output head, which lets CRPS training match the probabilistic
+        objective without feeding sampled predictions back as future inputs.
+        """
+
+        if num_samples <= 0:
+            raise ValueError("num_samples must be positive.")
+        if not 1 <= horizon <= self.horizon:
+            raise ValueError(f"horizon must be in [1, {self.horizon}], got {horizon}.")
+        if decoder_inputs.shape[1] < horizon:
+            raise ValueError(
+                f"decoder_inputs length must be at least horizon={horizon}, "
+                f"got {decoder_inputs.shape[1]}."
+            )
+        if self.head_kind == "deterministic":
+            sample_count = 1
+        else:
+            sample_count = num_samples
+        batch_size = state.shape[0]
+        repeated_state = (
+            state.unsqueeze(0)
+            .expand(sample_count, -1, -1)
+            .reshape(sample_count * batch_size, state.shape[-1])
+        )
+        repeated_inputs = (
+            decoder_inputs[:, :horizon]
+            .unsqueeze(0)
+            .expand(sample_count, -1, -1)
+            .reshape(sample_count * batch_size, horizon)
+        )
+        decoded = self._decode_prefix(repeated_state, repeated_inputs)
+        sampled_weight, sampled_bias = self._sample_output_parameters(
+            sample_count=sample_count,
+            batch_size=batch_size,
+            use_mean=False,
+        )
+        flat_features = decoded.reshape(sample_count * batch_size * horizon, decoded.shape[-1])
+        repeated_weight = sampled_weight.repeat_interleave(horizon, dim=0)
+        repeated_bias = sampled_bias.repeat_interleave(horizon, dim=0)
+        samples = (flat_features * repeated_weight).sum(dim=-1) + repeated_bias
+        return samples.reshape(sample_count, batch_size, horizon)
+
     def _rollout(
         self,
         state: Tensor,

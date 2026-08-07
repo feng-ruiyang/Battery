@@ -14,6 +14,7 @@ from battery_soh.training.trainer import (
     build_predictor_optimizer,
     optimizer_learning_rates,
     scheduled_sampling_probability,
+    stochastic_rollout_prefix_mode,
     stochastic_rollout_settings,
     vbll_posterior_metrics,
     vbll_rho_grad_norm,
@@ -191,6 +192,30 @@ def test_stochastic_rollout_backpropagates_to_posterior_scale() -> None:
     assert torch.count_nonzero(decoder.vbll_head.weight_rho.grad) > 0
 
 
+def test_teacher_forced_stochastic_samples_backpropagate_to_posterior_scale() -> None:
+    decoder = TeacherForcingTrajectoryDecoder(
+        state_dim=8,
+        horizon=4,
+        hidden_dim=8,
+        num_layers=1,
+        num_heads=2,
+        dim_feedforward=16,
+        dropout=0.0,
+        head_kind="vbll",
+    )
+    samples = decoder.teacher_forced_stochastic_samples(
+        state=torch.randn(2, 8),
+        decoder_inputs=torch.ones(2, 4),
+        num_samples=3,
+        horizon=3,
+    )
+    samples.square().mean().backward()
+
+    assert samples.shape == (3, 2, 3)
+    assert decoder.vbll_head.weight_rho.grad is not None
+    assert torch.count_nonzero(decoder.vbll_head.weight_rho.grad) > 0
+
+
 def test_sample_based_crps_balances_target_error_and_sample_spread() -> None:
     samples = torch.tensor([[[0.0]], [[2.0]]])
     target = torch.tensor([[1.0]])
@@ -295,6 +320,16 @@ def test_stochastic_rollout_settings_use_horizon_curriculum() -> None:
     assert stochastic_rollout_settings(cfg, 100) == (4, 80)
 
 
+def test_stochastic_rollout_prefix_mode_defaults_to_generated() -> None:
+    assert stochastic_rollout_prefix_mode({"training": {}}) == "generated"
+    assert (
+        stochastic_rollout_prefix_mode(
+            {"training": {"stochastic_rollout": {"prefix_mode": "teacher_forced"}}}
+        )
+        == "teacher_forced"
+    )
+
+
 def test_total_loss_combines_nll_and_differentiable_rollout_crps() -> None:
     model = SOHProbabilisticPredictor.vbll(
         latent_dim=4,
@@ -335,6 +370,51 @@ def test_total_loss_combines_nll_and_differentiable_rollout_crps() -> None:
     assert losses["stochastic_rollout"].item() > 0.0
     assert losses["stochastic_rollout_negative"].item() >= 0.0
     assert losses["stochastic_rollout_horizon"].item() == 3
+    assert model.decoder.vbll_head.weight_rho.grad is not None
+    assert torch.count_nonzero(model.decoder.vbll_head.weight_rho.grad) > 0
+
+
+def test_predictor_teacher_forced_stochastic_crps_uses_true_prefix() -> None:
+    model = SOHProbabilisticPredictor.vbll(
+        latent_dim=4,
+        aux_dim=0,
+        horizon=4,
+        history_dim=8,
+        decoder_dim=8,
+    )
+    batch = {
+        "z_window": torch.randn(2, 5, 4),
+        "soh_history": torch.ones(2, 5),
+        "soh_future": torch.full((2, 4), 0.9),
+        "mask": torch.ones(2, 4, dtype=torch.bool),
+    }
+    outputs = model(
+        z_window=batch["z_window"],
+        soh_history=batch["soh_history"],
+        soh_future=batch["soh_future"],
+        stochastic_rollout_num_samples=3,
+        stochastic_rollout_horizon=3,
+        stochastic_rollout_prefix_mode="teacher_forced",
+    )
+    cfg = {
+        "training": {
+            "objective": "nll",
+            "beta_kl": 1.0e-4,
+            "lambda_state": 1.0,
+            "stochastic_rollout": {
+                "weight": 0.1,
+                "negative_weight": 0.1,
+                "objective": "crps",
+                "prefix_mode": "teacher_forced",
+            },
+        }
+    }
+
+    losses = total_loss(outputs, batch, cfg)
+    losses["loss"].backward()
+
+    assert outputs["stochastic_rollout_samples"].shape == (3, 2, 3)
+    assert losses["stochastic_rollout"].item() > 0.0
     assert model.decoder.vbll_head.weight_rho.grad is not None
     assert torch.count_nonzero(model.decoder.vbll_head.weight_rho.grad) > 0
 

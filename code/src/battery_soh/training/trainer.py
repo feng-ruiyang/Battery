@@ -37,6 +37,7 @@ def train_one_epoch(
     total_steps = _safe_len(dataloader)
     sampling_probability = scheduled_sampling_probability(cfg, epoch)
     rollout_num_samples, rollout_horizon = stochastic_rollout_settings(cfg, epoch)
+    rollout_prefix_mode = stochastic_rollout_prefix_mode(cfg)
     for step, batch in enumerate(dataloader, start=1):
         batch = move_batch_to_device(batch, device)
         outputs = (
@@ -47,6 +48,7 @@ def train_one_epoch(
                 scheduled_sampling_probability=sampling_probability,
                 stochastic_rollout_num_samples=rollout_num_samples,
                 stochastic_rollout_horizon=rollout_horizon,
+                stochastic_rollout_prefix_mode=rollout_prefix_mode,
             )
         )
         losses = total_loss(outputs, batch, cfg)
@@ -209,6 +211,17 @@ def stochastic_rollout_settings(
     if horizon <= 0:
         raise ValueError("stochastic_rollout.horizon must be positive.")
     return num_samples, horizon
+
+
+def stochastic_rollout_prefix_mode(cfg: dict[str, Any]) -> str:
+    rollout = cfg.get("training", {}).get("stochastic_rollout", {})
+    mode = str(rollout.get("prefix_mode", "generated"))
+    if mode not in {"generated", "teacher_forced"}:
+        raise ValueError(
+            "training.stochastic_rollout.prefix_mode must be "
+            "'generated' or 'teacher_forced'."
+        )
+    return mode
 
 
 def build_predictor_optimizer(
