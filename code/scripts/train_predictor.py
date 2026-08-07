@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from battery_soh.data.torch_datasets import LatentCacheStore, LatentWindowDataset, load_split_ids
 from battery_soh.models.soh_predictor import SOHProbabilisticPredictor
-from battery_soh.training.checkpointing import save_checkpoint
+from battery_soh.training.checkpointing import load_checkpoint, save_checkpoint
 from battery_soh.training.trainer import (
     build_predictor_optimizer,
     evaluate_one_epoch,
@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split-file", type=Path, default=None)
     parser.add_argument("--latent-cache", type=Path, default=None)
     parser.add_argument("--run-name", type=str, default=None)
+    parser.add_argument("--resume", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -114,10 +115,15 @@ def main() -> None:
         f"vbll_rho={learning_rates.get('vbll_rho', learning_rates['base']):.6g}",
         flush=True,
     )
-    output_dir = resolve_run_output_dir(cfg, "outputs/soh_predictor")
+    output_dir = (
+        args.resume.expanduser().resolve().parent
+        if args.resume is not None
+        else resolve_run_output_dir(cfg, "outputs/soh_predictor")
+    )
     print(f"Output dir: {output_dir}", flush=True)
     logger = build_metric_logger(cfg, output_dir)
     best_val = float("inf")
+    start_epoch = 1
     max_epochs = int(train_cfg.get("max_epochs", 1))
     schedule_cfg = train_cfg.get("scheduled_sampling", {})
     val_sampling_probability = (
@@ -138,8 +144,28 @@ def main() -> None:
     )
     validation_seed = int(rollout_cfg.get("validation_seed", 42))
     rollout_negative_weight = float(rollout_cfg.get("negative_weight", 0.0))
+    if args.resume is not None:
+        resume_path = args.resume.expanduser()
+        payload = load_checkpoint(resume_path, model, optimizer=optimizer)
+        start_epoch = int(payload.get("epoch") or 0) + 1
+        best_val = _infer_resume_best_value(
+            output_dir=output_dir,
+            fallback_payload=payload,
+            use_stochastic_selection=validation_rollout_samples > 0,
+            negative_weight=rollout_negative_weight,
+        )
+        print(
+            f"Resumed checkpoint: {resume_path}; start_epoch={start_epoch}; "
+            f"best_selection={best_val:.6f}",
+            flush=True,
+        )
+    if start_epoch > max_epochs:
+        raise ValueError(
+            f"Resume checkpoint starts at epoch {start_epoch}, "
+            f"but training.max_epochs={max_epochs}."
+        )
     try:
-        for epoch in range(1, max_epochs + 1):
+        for epoch in range(start_epoch, max_epochs + 1):
             train_result = train_one_epoch(model, train_loader, optimizer, cfg, device, epoch=epoch)
             val_result = (
                 evaluate_one_epoch(model, val_loader, cfg, device)
@@ -253,6 +279,28 @@ def main() -> None:
     finally:
         logger.close()
     print(f"Wrote checkpoints to {output_dir}")
+
+
+def _infer_resume_best_value(
+    output_dir: Path,
+    fallback_payload: dict,
+    use_stochastic_selection: bool,
+    negative_weight: float,
+) -> float:
+    best_path = output_dir / "best.pt"
+    payload = fallback_payload
+    if best_path.is_file():
+        payload = torch.load(best_path, map_location="cpu")
+    metrics = payload.get("metrics", {})
+    if use_stochastic_selection and "val_stochastic_crps" in metrics:
+        return float(metrics["val_stochastic_crps"]) + negative_weight * float(
+            metrics.get("val_stochastic_negative", 0.0)
+        )
+    if "val_loss" in metrics:
+        return float(metrics["val_loss"])
+    if "val_rollout_loss" in metrics:
+        return float(metrics["val_rollout_loss"])
+    return float("inf")
 
 
 def build_dataloaders(cfg: dict) -> tuple[DataLoader, DataLoader | None]:
