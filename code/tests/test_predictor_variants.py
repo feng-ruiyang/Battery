@@ -225,6 +225,30 @@ def test_sample_based_crps_balances_target_error_and_sample_spread() -> None:
     assert torch.isclose(loss, torch.tensor(0.5))
 
 
+def test_sample_based_crps_supports_fair_ensemble_variant() -> None:
+    samples = torch.tensor([[[0.0]], [[2.0]], [[4.0]], [[6.0]]])
+    target = torch.tensor([[1.0]])
+
+    empirical = sample_based_crps(samples, target, variant="empirical")
+    fair = sample_based_crps(samples, target, variant="fair")
+
+    torch.testing.assert_close(empirical, torch.tensor(1.25))
+    torch.testing.assert_close(fair, torch.tensor(0.8333333))
+    assert fair < empirical
+
+
+def test_fair_sample_based_crps_requires_multiple_samples() -> None:
+    samples = torch.tensor([[[1.0]]])
+    target = torch.tensor([[1.0]])
+
+    try:
+        sample_based_crps(samples, target, variant="fair")
+    except ValueError as error:
+        assert "at least two samples" in str(error)
+    else:
+        raise AssertionError("Expected fair CRPS with one sample to fail.")
+
+
 def test_stochastic_rollout_negative_loss_penalizes_only_negative_samples() -> None:
     outputs = {
         "y_mean": torch.zeros(1, 1),
@@ -360,6 +384,7 @@ def test_total_loss_combines_nll_and_differentiable_rollout_crps() -> None:
                 "weight": 0.1,
                 "negative_weight": 0.1,
                 "objective": "crps",
+                "crps_variant": "fair",
             },
         }
     }

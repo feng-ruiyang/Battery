@@ -376,7 +376,13 @@ scheduled sampling + stochastic CRPS & 0.0551 & 0.0638 & 0.0864 & 0.9877 & 0.105
 
 \subsection{CALCE 已完成结果}
 
-CALCE 当前完成到 encoder、latent cache 和第一轮 predictor 阶段。表 \ref{tab:calce_pretrain} 总结了已确认的中间结果；表 \ref{tab:calce_predictor_test} 汇总了 test cell \texttt{CS2\_38} 上的概率 rollout 指标。该结果仍是单 split 探索性实验，后续需要补充严格同协议 split 和多随机种子。
+CALCE 当前完成到 encoder、latent cache、首轮 mixed-protocol predictor 以及
+1C same-protocol leave-one-cell-out 对照。表 \ref{tab:calce_pretrain}
+总结了已确认的中间结果；表 \ref{tab:calce_predictor_test} 汇总了首轮
+test cell \texttt{CS2\_38} 上的概率 rollout 指标。需要注意的是，首轮
+seed 42 split 不是严格跨协议测试；因此后续又补充了仅使用
+\texttt{CS2\_35--38} 的 1C same-protocol held-out cell 和
+leave-one-cell-out 聚合实验。
 
 \begin{table}[h]
 \centering
@@ -427,33 +433,170 @@ sample q01 / q50 / q99 & 0.0463 / 0.7387 / 1.1048 \\
 
 与 NASA test 上常见的过宽区间不同，CALCE 首轮结果的 90\% coverage 为 0.9298，区间宽度为 0.6186，说明不确定性不再明显过度保守。MC sample-mean 也优于 posterior-mean 权重轨迹，表明当前随机 rollout 训练在 CALCE 上更适合作为点预测代表。不过该 split 的 test cell \texttt{CS2\_38} 与训练集中的 \texttt{CS2\_35--37} 同属近似 1C 组，因此它更接近 cross-cell 加混合协议泛化，而不是最严格的 out-of-distribution 测试。
 
-表 \ref{tab:nasa_calce_summary} 给出当前 NASA 与 CALCE 两条实验线的汇报用对比。NASA 行采用当前概率指标最优的 curriculum + linear hinge 配置；CALCE 行采用首轮 mixed-protocol held-out cell predictor 的 \texttt{CS2\_38} test 结果。两者均为单 split 探索性结果，不能直接作为最终统计结论。
+为避免把 mixed-protocol split 误解为 protocol-shift 结论，进一步构造了
+严格 1C same-protocol 对照。单折实验使用
+\[
+\mathrm{train}=\{\mathrm{CS2\_35,CS2\_36}\},\quad
+\mathrm{val}=\{\mathrm{CS2\_37}\},\quad
+\mathrm{test}=\{\mathrm{CS2\_38}\}.
+\]
+best checkpoint 在 test split 上的整体 MAE/RMSE/CRPS 分别为
+0.0756/0.1459/0.0821，90\% prediction interval coverage/width 为
+0.9853/0.7441，90\% 下界小于 0 的比例为 0.742\%。按 rollout horizon
+分解后的结果见表 \ref{tab:calce_1c_horizon}。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{rrrrrrrr}
+\toprule
+horizon & MAE & RMSE & STD & CRPS & 50\% cov & 50\% width & 90\% cov / width \\
+\midrule
+1  & 0.0144 & 0.0379 & 0.0533 & 0.0158 & 0.9850 & 0.0693 & 0.9970 / 0.1772 \\
+5  & 0.0347 & 0.0822 & 0.1305 & 0.0388 & 0.9850 & 0.1608 & 0.9850 / 0.4266 \\
+10 & 0.0447 & 0.1127 & 0.1708 & 0.0526 & 0.9668 & 0.1991 & 0.9698 / 0.5389 \\
+20 & 0.0586 & 0.1390 & 0.2295 & 0.0712 & 0.9482 & 0.2697 & 0.9482 / 0.7289 \\
+50 & 0.0911 & 0.1597 & 0.2745 & 0.0968 & 0.8878 & 0.4005 & 0.9927 / 0.8499 \\
+80 & 0.1080 & 0.1669 & 0.2813 & 0.1039 & 0.9242 & 0.4791 & 1.0000 / 0.7851 \\
+\bottomrule
+\end{tabular}
+\caption{CALCE-CS2 1C same-protocol 单折 test 结果，train=\texttt{CS2\_35/36}，
+validation=\texttt{CS2\_37}，test=\texttt{CS2\_38}。STD 为 posterior
+sample trajectories 的预测标准差均值。}
+\label{tab:calce_1c_horizon}
+\end{table}
+
+为了排除单个 held-out cell 的偶然性，随后在 \texttt{CS2\_35--38}
+内部进行了 1C leave-one-cell-out 聚合。每折使用两个 cell 训练、一个 cell
+验证、一个 cell 测试，并在 best 与 last checkpoint 上都保存 128 条
+posterior sample trajectories。表 \ref{tab:calce_1c_loo_folds} 给出逐折
+best checkpoint 结果，表 \ref{tab:calce_1c_loo_aggregate} 给出聚合统计。
 
 \begin{table}[h]
 \centering
 \scriptsize
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{p{0.27\linewidth}p{0.31\linewidth}p{0.31\linewidth}}
+\begin{tabular}{llrrrrrrr}
 \toprule
-项目 & NASA & CALCE-CS2 \\
+test cell & train cells & best ep. & MAE & RMSE & CRPS & 90\% cov & 90\% width & sample neg. \\
 \midrule
-实验角色 & 当前主训练集；用于调试多步 stochastic rollout、负值约束和 VBLL posterior scale & 跨 cell/混合协议泛化验证；用于观察不确定性在新数据集上的表现 \\
-电池与容量定义 & Ames aging cells；SoH=$Q^{\mathrm{discharge}}/2\,\mathrm{Ah}$ & CS2 LiCoO$_2$ prismatic cells；SoH=$Q^{\mathrm{discharge}}/1.1\,\mathrm{Ah}$ \\
-有效数据规模 & 34 cells，2750 个有限 SoH discharge cycles & 6 cells，5430 个有效 cycles \\
-cell split & train/val/test = 24/5/5 & train/val/test = 4/1/1；test=\texttt{CS2\_38} \\
-cycle encoder 输入 & \texttt{V/I/T}，sequence length 1000，latent dim 128 & \texttt{V/I}，sequence length 1000，latent dim 128 \\
-autoencoder best val MSE & 0.0339 & 0.0305 \\
-predictor 配置 & stochastic CRPS + linear negative hinge + 20/40/80 horizon curriculum & 同一 VBLL rollout 框架，首轮 mixed-protocol held-out cell predictor \\
-posterior-mean MAE/RMSE & 0.0955 / -- & 0.1227 / 0.2081 \\
-MC sample-mean MAE/RMSE & 0.0410 / -- & 0.1108 / 0.1841 \\
-CRPS & 0.0771 & 0.0922 \\
-90\% PI coverage / width & 0.9971 / 0.8305 & 0.9298 / 0.6186 \\
-sample negative / upper out-of-range & 5.63\% / -- & 0.4657\% / 0.0018\% \\
-当前观察 & MC 误差和 CRPS 最优，但 coverage 仍偏高，说明区间仍偏保守 & coverage 更接近目标，区间更窄，负尾部明显更健康 \\
+\texttt{CS2\_35} & \texttt{CS2\_36,CS2\_37} & 99 & 0.0940 & 0.1704 & 0.0848 & 0.9721 & 0.6069 & 0.453\% \\
+\texttt{CS2\_36} & \texttt{CS2\_37,CS2\_38} & 99 & 0.0818 & 0.1685 & 0.0784 & 0.9636 & 0.5817 & 0.766\% \\
+\texttt{CS2\_37} & \texttt{CS2\_35,CS2\_38} & 88 & 0.0883 & 0.1367 & 0.0738 & 0.9847 & 0.7186 & 0.250\% \\
+\texttt{CS2\_38} & \texttt{CS2\_35,CS2\_36} & 97 & 0.0767 & 0.1472 & 0.0813 & 0.9832 & 0.7471 & 1.018\% \\
 \bottomrule
 \end{tabular}
-\caption{NASA 与 CALCE-CS2 当前实验线的汇报用对比。}
-\label{tab:nasa_calce_summary}
+\caption{CALCE-CS2 1C leave-one-cell-out 逐折 test 结果。每折 validation cell
+为剩余 1C cell 中未列入 train/test 的 cell。sample neg. 为 128 条 posterior
+sample trajectories 中小于 0 的比例。}
+\label{tab:calce_1c_loo_folds}
+\end{table}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+指标 & mean & std & min & max \\
+\midrule
+MAE & 0.0852 & 0.0075 & 0.0767 & 0.0940 \\
+RMSE & 0.1557 & 0.0164 & 0.1367 & 0.1704 \\
+CRPS & 0.0796 & 0.0047 & 0.0738 & 0.0848 \\
+50\% coverage & 0.9082 & 0.0116 & 0.8967 & 0.9205 \\
+50\% width & 0.3010 & 0.0315 & 0.2656 & 0.3350 \\
+90\% coverage & 0.9759 & 0.0099 & 0.9636 & 0.9847 \\
+90\% width & 0.6636 & 0.0815 & 0.5817 & 0.7471 \\
+90\% lower bound $<0$ & 1.483\% & 0.993\% & 0.000\% & 2.089\% \\
+sample negative & 0.622\% & 0.339\% & 0.250\% & 1.018\% \\
+sample q01 & 0.0347 & 0.0353 & -0.0015 & 0.0785 \\
+\bottomrule
+\end{tabular}
+\caption{CALCE-CS2 1C leave-one-cell-out best checkpoint 聚合结果。}
+\label{tab:calce_1c_loo_aggregate}
+\end{table}
+
+1C leave-one-cell-out 的 CRPS 标准差仅为 0.0047，说明概率 rollout 结果
+不是由单个 test cell 偶然驱动。best checkpoint 相比 last checkpoint 的
+平均差异为：MAE 增量 $+0.00079$、RMSE 增量 $+0.00224$、CRPS 增量
+$+0.00221$（last minus best），且 4/4 folds 的 CRPS 均为 best 更优。
+因此，基于 validation rollout CRPS 加负值惩罚的 selection metric 在该组
+CALCE 1C 实验中是有效的。总体上，CALCE-CS2 1C 结果支持
+``同协议 held-out cell 下概率 SoH rollout 稳定且不确定性可控'' 的结论；
+但它仍不能证明模型已经解决 0.5C 与 1C 之间的 protocol shift。
+
+\subsection{Severson/MIT 同分布 rollout 结果}
+
+在优化后的 stochastic rollout 训练配置下，重新在 Severson/MIT fast-charge
+数据上训练 predictor。该数据为当前规模最大的同体系训练集：processed corpus
+包含 140 个 cell 和 114314 个 cycle，cell split 为 train/validation/test =
+98/21/21。cycle encoder 使用 \texttt{V/I/T} 三通道，train-only 标准化后
+best validation reconstruction MSE 为 0.00108。predictor 训练在约 epoch 92
+提前终止，并使用当前 best checkpoint 在 test split 上进行 rollout 评估。
+
+posterior-mean rollout 的整体 MAE/RMSE 为 0.00240/0.01452，macro-cell
+MAE/RMSE 为 0.00244/0.01190；预测没有出现非有限值或越界值。进一步使用
+16 条 posterior sample trajectories 评估不确定性，得到 MC sample-mean
+MAE/RMSE 为 0.00417/0.01547，CRPS 为 0.00398，90\% prediction interval
+coverage/width 为 0.9961/0.0360，sample negative 为 0.0\%。按 horizon
+分解的 MC16 结果见表 \ref{tab:severson_mc16_horizon}。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{rrrrrr}
+\toprule
+horizon & MAE & RMSE & CRPS & STD & 90\% cov / width \\
+\midrule
+1  & 0.00152 & 0.01396 & 0.00151 & 0.00404 & 0.9967 / 0.0118 \\
+5  & 0.00188 & 0.01383 & 0.00177 & 0.00516 & 0.9979 / 0.0150 \\
+10 & 0.00201 & 0.01400 & 0.00200 & 0.00596 & 0.9988 / 0.0173 \\
+20 & 0.00244 & 0.01464 & 0.00246 & 0.00721 & 0.9977 / 0.0210 \\
+50 & 0.00466 & 0.01571 & 0.00455 & 0.01422 & 0.9944 / 0.0413 \\
+80 & 0.00796 & 0.01768 & 0.00698 & 0.02272 & 0.9949 / 0.0655 \\
+\bottomrule
+\end{tabular}
+\caption{Severson/MIT test split 上 best checkpoint 的 16-sample posterior
+rollout 结果。STD 为 posterior sample trajectories 的预测标准差均值。}
+\label{tab:severson_mc16_horizon}
+\end{table}
+
+该结果表明，在大规模、同体系、强同分布的 fast-charge LFP 数据上，模型的
+多步自回归误差几乎不扩散，且不确定性随 horizon 平滑增大但整体保持很窄。
+这与 NASA 和 CALCE 上更大的 CRPS、区间宽度和负尾部形成对照。需要注意的是，
+Severson/MIT 的 90\% coverage 达到 0.9961，说明即使区间绝对宽度很窄，
+相对该 test split 仍偏保守。因此它更适合作为 in-distribution reliability
+sanity check，而不是用来证明 out-of-distribution uncertainty detection。
+
+表 \ref{tab:nasa_calce_severson_summary} 给出当前 NASA、CALCE 和
+Severson/MIT 三条实验线的汇报用对比。NASA 行采用当前概率指标最优的
+curriculum + linear hinge 配置；CALCE 行采用 1C leave-one-cell-out 聚合
+结果；Severson/MIT 行采用当前 best checkpoint 的 MC16 test rollout 结果。
+这些结果的 split、样本数和数据规模不同，应作为阶段性实验记录和趋势对照，
+不能直接作为最终统计结论。
+
+\begin{table}[h]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{p{0.22\linewidth}p{0.23\linewidth}p{0.23\linewidth}p{0.23\linewidth}}
+\toprule
+项目 & NASA & CALCE-CS2 1C & Severson/MIT \\
+\midrule
+实验角色 & 小样本/异质 aging 数据；用于调试 rollout 负尾部和 posterior scale & 同协议 held-out cell 泛化；用于检验小样本下概率稳定性 & 大规模同分布 fast-charge corpus；用于检验 in-distribution reliability \\
+有效数据规模 & 34 cells，2750 个有限 SoH discharge cycles & 4 个 1C cells，LOO 聚合 & 140 cells，114314 cycles \\
+cell split & train/val/test = 24/5/5 & 1C leave-one-cell-out & train/val/test = 98/21/21 \\
+cycle encoder 输入 & \texttt{V/I/T}，latent dim 128 & \texttt{V/I}，latent dim 128 & \texttt{V/I/T}，latent dim 128 \\
+autoencoder best val MSE & 0.0339 & 0.0305 & 0.00108 \\
+predictor 配置 & stochastic CRPS + linear negative hinge + 20/40/80 curriculum & 同一 VBLL stochastic rollout 框架 & 同一优化 VBLL stochastic rollout 框架 \\
+posterior-mean MAE/RMSE & 0.0955 / -- & 单折 0.0756 / 0.1459 & 0.00240 / 0.01452 \\
+MC sample-mean MAE/RMSE & 0.0410 / -- & 0.0852 / 0.1557 & 0.00417 / 0.01547 \\
+CRPS & 0.0771 & 0.0796 & 0.00398 \\
+90\% PI coverage / width & 0.9971 / 0.8305 & 0.9759 / 0.6636 & 0.9961 / 0.0360 \\
+sample negative / upper out-of-range & 5.63\% / -- & 0.622\% / -- & 0.0\% / 0.0\% \\
+当前观察 & MC 误差和 CRPS 改善，但 coverage 仍偏高，区间偏保守 & CRPS 方差小，负尾部低，支持同协议小样本泛化 & 误差极低、区间极窄、负尾部消失，说明同分布退化动力学高度规则 \\
+\bottomrule
+\end{tabular}
+\caption{NASA、CALCE-CS2 与 Severson/MIT 当前实验线的汇报用对比。}
+\label{tab:nasa_calce_severson_summary}
 \end{table}
 
 \subsection{基线与消融}

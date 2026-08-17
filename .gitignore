@@ -9,6 +9,8 @@ __pycache__/
 
 # LaTeX intermediates
 *.aux
+*.fdb_latexmk
+*.fls
 *.log
 *.out
 *.toc
@@ -20,3 +22,4 @@ missfont.log
 .venv/
 venv/
 wandb/
+tmp/

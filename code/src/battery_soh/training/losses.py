@@ -165,7 +165,8 @@ def stochastic_rollout_loss(
         mask = mask[:, :horizon]
     objective = str(_deep_get(cfg, "training.stochastic_rollout.objective", "crps"))
     if objective == "crps":
-        return sample_based_crps(samples, target, mask)
+        variant = str(_deep_get(cfg, "training.stochastic_rollout.crps_variant", "empirical"))
+        return sample_based_crps(samples, target, mask, variant=variant)
     if objective == "mse":
         valid = torch.isfinite(target)
         if mask is not None:
@@ -181,8 +182,15 @@ def sample_based_crps(
     samples: Tensor,
     target: Tensor,
     mask: Tensor | None = None,
+    variant: str = "empirical",
 ) -> Tensor:
-    """Empirical CRPS for samples shaped [num_samples, batch, horizon]."""
+    """Sample CRPS for samples shaped [num_samples, batch, horizon].
+
+    ``variant="empirical"`` uses the empirical distribution score with
+    ``K^2`` pairwise distances, including zero self-distances. ``variant="fair"``
+    removes self-distances and normalizes by ``K * (K - 1)``, which reduces the
+    finite-ensemble dispersion bias for small K.
+    """
 
     valid = torch.isfinite(target)
     if mask is not None:
@@ -190,10 +198,26 @@ def sample_based_crps(
     if not torch.any(valid):
         return samples.sum() * 0.0
 
+    variant = variant.lower()
+    if variant not in {"empirical", "fair"}:
+        raise ValueError(
+            "training.stochastic_rollout.crps_variant must be "
+            f"'empirical' or 'fair', got {variant!r}."
+        )
+
     target_distance = (samples - target.unsqueeze(0)).abs().mean(dim=0)
-    pairwise_distance = (
-        samples.unsqueeze(1) - samples.unsqueeze(0)
-    ).abs().mean(dim=(0, 1))
+    pairwise = (samples.unsqueeze(1) - samples.unsqueeze(0)).abs()
+    if variant == "fair":
+        sample_count = samples.shape[0]
+        if sample_count < 2:
+            raise ValueError("Fair ensemble CRPS requires at least two samples.")
+        keep = ~torch.eye(sample_count, dtype=torch.bool, device=samples.device)
+        pairwise_distance = pairwise[keep].reshape(
+            sample_count * (sample_count - 1),
+            *samples.shape[1:],
+        ).mean(dim=0)
+    else:
+        pairwise_distance = pairwise.mean(dim=(0, 1))
     crps = target_distance - 0.5 * pairwise_distance
     return crps[valid].mean()
 
