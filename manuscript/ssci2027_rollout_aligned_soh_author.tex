@@ -1,22 +1,40 @@
+\documentclass[conference]{IEEEtran}
 
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{graphicx}
 \usepackage{url}
 
+\renewcommand{\IEEEkeywordsname}{Keywords}
+
 \begin{document}
 
 \title{Rollout-Aligned Uncertainty Learning for Probabilistic Battery State-of-Health Forecasting}
 
 \author{
-\IEEEauthorblockN{
-Feng Ruiyang\IEEEauthorrefmark{1} and Supervisor Name\IEEEauthorrefmark{1}\IEEEauthorrefmark{2}
-}
-\IEEEauthorblockA{\IEEEauthorrefmark{1}
-Department of Computing, City University of Hong Kong (Dong Guan)\\
-Email: 72400082@cityu-dg.edu.cn}
-\IEEEauthorblockA{\IEEEauthorrefmark{2}
-Corresponding author: Supervisor Name, email: supervisor@example.com}
+\IEEEauthorblockN{Ruiyang FENG}
+\IEEEauthorblockA{
+Department of Computing\\
+City University of Hong Kong\\
+(Dongguan)\\
+Dongguan, Guangdong, China\\
+72400082@cityu-dg.edu.cn}
+\and
+\IEEEauthorblockN{Meng CHEN}
+\IEEEauthorblockA{
+Hong Kong Applied Science\\
+and Technology Research Institute\\
+Co. Ltd.\\
+HKSAR, China\\
+ritachen@astri.org}
+\and
+\IEEEauthorblockN{Chao YANG}
+\IEEEauthorblockA{
+Hong Kong Applied Science\\
+and Technology Research Institute\\
+Co. Ltd.\\
+HKSAR, China\\
+chaoyang@astri.org}
 }
 
 \maketitle
@@ -25,26 +43,24 @@ Corresponding author: Supervisor Name, email: supervisor@example.com}
 Accurate long-horizon battery state-of-health (SoH) forecasting is important
 for battery management systems because prediction errors and uncertainty can
 accumulate over future cycles. This paper studies probabilistic SoH forecasting
-under deployment-like autoregressive rollout. We use a Transformer-based
-degradation model with a Variational Bayesian Last Layer (VBLL) output head and
-compare teacher-forced training with a stochastic rollout-aligned objective.
+under deployment-like autoregressive rollout. A Transformer-based
+degradation model with a Variational Bayesian Last Layer (VBLL) output head is used
 The rollout-aligned objective feeds sampled predictions back into the decoder
 during training and optimizes a sample-based Continuous Ranked Probability
-Score (CRPS) together with a non-negativity penalty.
-
-Experiments are conducted with cell-level splits and free-running stochastic
-rollout evaluation. In per-cell macro evaluation on the main test split, the
+Score (CRPS) together with a non-negativity penalty. Experiments are conducted with evaluation. In per-cell macro evaluation on the main test split, the
 rollout-aligned model reduces CRPS from 0.00539 to 0.00278 compared with the
 teacher-forced CRPS-trained VBLL baseline. It also reduces the 90\% prediction
 interval width from 0.05603 to 0.02014 while maintaining 90\% coverage at
 0.95258. These results show that rollout-aligned training can improve
 long-horizon probabilistic SoH forecasting without changing the model
-architecture or uncertainty head.
+architecture and uncertainty head.
 \end{abstract}
 
+\vspace{\baselineskip}
 \begin{IEEEkeywords}
-Battery state of health, probabilistic forecasting, uncertainty estimation,
-rollout training, Variational Bayesian Last Layer.
+\normalfont\itshape
+battery state of health, probabilistic forecasting, uncertainty estimation,
+rollout training, variational bayesian last layer.
 \end{IEEEkeywords}
 
 \section{Introduction}
@@ -68,7 +84,7 @@ future degradation-trajectory prediction \cite{bellomo2025transformersoh,
 huang2026ic2ml,hu2025batterygpt}. For uncertainty-aware prediction,
 likelihood-based losses, Bayesian or ensemble models, evidential
 distributions, and interval metrics have been used
-\cite{munna2026fusion,parimala2026,wang2026uqreview}.
+\cite{munna2026fusion,wang2026uqreview}.
 
 However, most uncertainty-aware SoH studies do not isolate the effect of
 multi-step rollout training. Many sequence models are trained with teacher
@@ -92,10 +108,7 @@ summarize limitations and conclusions, respectively.
 \centering
 \includegraphics[width=\textwidth]{figures/rollout_framework.png}
 \caption{Overview of the rollout-aligned probabilistic SoH forecasting
-framework. A pretrained cycle encoder extracts latent cycle representations,
-the degradation module aggregates the latent history, and the autoregressive
-VBLL decoder generates stochastic future SoH trajectories. Representative
-rollouts across different battery life stages are shown on the right.}
+framework.}
 \label{fig:rollout-framework}
 \end{figure*}
 
@@ -103,13 +116,16 @@ rollouts across different battery life stages are shown on the right.}
 
 \subsection{Battery Health Forecasting}
 
+Recent reviews organize lithium-ion battery SoH estimation methods from cell
+to pack levels and summarize direct, model-based, data-driven, and hybrid
+approaches \cite{su2024sohreview}.
 Battery health forecasting has progressed from feature-based early-life
 prediction to sequence models for complete degradation trajectories. Severson
 et al.~\cite{severson2019} showed that early-cycle discharge voltage can predict
 battery cycle life before clear capacity degradation. Bellomo
 et al.~\cite{bellomo2025transformersoh} and Huang et al.~\cite{huang2026ic2ml}
 used Transformer-based representations for multi-step SoH and RUL prediction,
-while BatteryGPT~\cite{hu2025batterygpt} and Lim and
+while Hu et al.~\cite{hu2025batterygpt} and Lim and
 See~\cite{lim2026worldmodel} modeled future evolution through autoregressive
 charging-data or latent-dynamics rollouts. However, these studies mainly
 provide deterministic forecasts or do not isolate teacher-forced from
@@ -245,13 +261,9 @@ Here, $\omega$ denotes the VBLL output-layer parameters, $q(\omega)$ is their
 learned variational posterior, and $p(\omega)$ is the zero-mean isotropic
 Gaussian prior. The vectors $\mu_{\omega}$ and $\sigma_{\omega}$ denote the
 posterior mean and standard deviation, while $\sigma_p$ is the prior standard
-deviation. For trajectory $k$, one parameter sample is drawn as
-$\omega^{(k)}=\mu_{\omega}+\sigma_{\omega}\odot\epsilon^{(k)}$, where
-$\epsilon^{(k)}\sim\mathcal{N}(0,I)$, and is held fixed across all forecast
-steps. Because no additional observation noise is sampled, the resulting
-trajectory intervals reflect uncertainty from the VBLL output-layer posterior
-rather than the full outcome predictive distribution. This gives free-running
-posterior sample paths:
+deviation.
+
+The autoregressive decoder generates free-running posterior sample paths as
 \begin{equation}
 \hat{y}_{t+h}^{(k)} =
 f_{\psi,\omega^{(k)}}(s_t, \hat{y}_{t+1:t+h-1}^{(k)}), \quad
@@ -259,13 +271,19 @@ f_{\psi,\omega^{(k)}}(s_t, \hat{y}_{t+1:t+h-1}^{(k)}), \quad
 \end{equation}
 Here, $f_{\psi,\omega^{(k)}}$ denotes the autoregressive SoH forecasting
 function that maps the degradation state and the previously generated SoH
-prefix to the next SoH prediction. The symbol $\psi$ denotes the deterministic parameters of the feature extractor and
-autoregressive decoder excluding the sampled VBLL output-layer parameters,
-$\omega^{(k)}$ denotes the independently sampled output-layer parameters for
-the $k$th trajectory, and $\hat y_{t+h}^{(k)}$ is the resulting sampled SoH
-prediction at horizon step $h$. Different trajectories use independent
-posterior samples.
-The rollout is initialized with the last observed SoH value $y_t$.
+prefix to the next SoH prediction. The symbol $\psi$ denotes the deterministic
+parameters of the feature extractor and autoregressive decoder, excluding the
+sampled VBLL output-layer parameters. The symbol $\omega^{(k)}$ denotes the
+output-layer parameters sampled for the $k$th trajectory, and
+$\hat y_{t+h}^{(k)}$ is the resulting SoH prediction at horizon step $h$.
+Specifically, for each trajectory $k$, a parameter sample is drawn once as
+$\omega^{(k)}=\mu_{\omega}+\sigma_{\omega}\odot\epsilon^{(k)}$, where
+$\epsilon^{(k)}\sim\mathcal{N}(0,I)$, and is held fixed across all forecast
+steps. Different trajectories use independent posterior samples. Because no
+additional observation noise is sampled, the predictive intervals formed from
+these trajectories reflect uncertainty induced by the VBLL output-layer
+posterior rather than the full outcome predictive distribution. Each rollout
+is initialized with the last observed SoH value $y_t$.
 
 \subsection{Teacher-Forced Training}
 
@@ -322,9 +340,27 @@ The main stochastic rollout loss is the empirical CRPS:
 \label{eq:empirical-crps}
 \end{equation}
 This sample form follows the proper scoring rule view of probabilistic
-forecast evaluation \cite{gneiting2007scoring}. It is computed over valid
-masked horizons. The current implementation uses $K=4$ training samples and
-a horizon curriculum of 20, 40, and 80 steps. A
+forecast evaluation \cite{gneiting2007scoring}.
+Equation~\eqref{eq:empirical-crps} defines the empirical CRPS for a single
+valid window--horizon target using $K$ stochastic rollout samples. The CRPS
+loss used in the complete training objective is its masked average over all
+valid targets:
+\[
+\mathcal{L}_{\mathrm{CRPS}}
+=
+\frac{1}{|\Omega|}
+\sum_{(b,h)\in\Omega}
+\widehat{\mathrm{CRPS}}_{b,h},
+\]
+where $\widehat{\mathrm{CRPS}}_{b,h}$ is obtained from
+\eqref{eq:empirical-crps} using the target $y_{b,h}$ and samples
+$\{\hat{y}_{b,h}^{(k)}\}_{k=1}^{K}$. Thus,
+\eqref{eq:empirical-crps} defines the per-target sample score, whereas
+$\lambda_{\mathrm{CRPS}}\mathcal{L}_{\mathrm{CRPS}}$ in the complete
+rollout-aligned objective adds its masked aggregate to the training loss.
+The coefficient $\lambda_{\mathrm{CRPS}}$ controls its contribution relative
+to the other loss terms. The current implementation uses $K=4$ training
+samples and a horizon curriculum of 20, 40, and 80 steps. A
 linear non-negativity penalty discourages negative SoH samples:
 \begin{equation}
 \mathcal{L}_{\mathrm{neg}}
@@ -351,10 +387,12 @@ invalid negative sampled SoH values.
 
 All models use the same cell-level split, pretrained cycle encoder, latent
 representations, model size, and optimizer settings. Normalization statistics
-are fitted on training cells only. Every model is evaluated by an 80-step
-free-running rollout; probabilistic metrics use 128 posterior trajectories per
-valid test window. Best checkpoints are selected exclusively on validation
-data using each model's corresponding validation objective.
+are fitted on training cells only. The history and forecast lengths are fixed
+at $M=30$ and $H=80$ cycles, respectively. Stochastic rollout training uses
+$K=4$ trajectories, and probabilistic evaluation uses $K_{\mathrm{eval}}=128$
+posterior trajectories per valid test window. Best checkpoints are selected
+exclusively on validation data using each model's corresponding validation
+objective.
 
 The main experiment uses a processed Severson-derived LFP fast-charge corpus
 \cite{severson2019}. The cell-level split contains 98 training cells, 21
@@ -368,7 +406,7 @@ given in Appendix~\ref{app:data-processing}.
 \subsection{Compared Methods}
 
 Table~\ref{tab:design} summarizes the controlled comparison. The key
-identification step is the middle row: VBLL-TF-CRPS uses the same CRPS-related
+identification step is the VBLL-TF-CRPS row, which uses the same CRPS-related
 training terms as VBLL-Rollout-CRPS but keeps teacher-forced prefixes. This
 separates objective matching from generated-prefix training. All probabilistic
 models share the same encoder, latent cache, VBLL head, and free-rollout
@@ -376,10 +414,8 @@ evaluation protocol. A deterministic teacher-forced model is reported as an
 additional point-forecast baseline. It is not used to claim uncertainty
 calibration. We also include VBLL-Rollout-CRPS-fair, which excludes self-pairs
 from the finite-ensemble CRPS and replaces the $K^2$ pairwise normalization by
-$K(K-1)$ while retaining generated-prefix rollout training. The main
-hyperparameters are listed in Appendix
-Table~\ref{tab:appendix-hparams}. In Table~\ref{tab:design}, ``Curr.'' denotes
-rollout curriculum training; the fair-CRPS variant differs from
+$K(K-1)$ while retaining generated-prefix rollout training. The fair-CRPS
+variant differs from
 VBLL-Rollout-CRPS only in its finite-ensemble CRPS estimator.
 
 \begin{table}[t]
@@ -387,14 +423,15 @@ VBLL-Rollout-CRPS only in its finite-ensemble CRPS estimator.
 \scriptsize
 \caption{Training design.}
 \label{tab:design}
-\setlength{\tabcolsep}{2pt}
-\begin{tabular}{@{}lcccc@{}}
+\setlength{\tabcolsep}{1.5pt}
+\begin{tabular}{@{}lccccc@{}}
 \toprule
-Method & Prefix & NLL & CRPS+Neg. & Curr. \\
+Method & Prefix & NLL & CRPS+Neg. & Self-pairs & Curriculum \\
 \midrule
-VBLL-TF-NLL & true & \checkmark & -- & -- \\
-VBLL-TF-CRPS & true & \checkmark & \checkmark & \checkmark \\
-VBLL-Rollout-CRPS & sampled & \checkmark & \checkmark & \checkmark \\
+VBLL-TF-NLL & true & \checkmark & -- & -- & -- \\
+VBLL-TF-CRPS & true & \checkmark & \checkmark & \checkmark & \checkmark \\
+VBLL-Rollout-CRPS & sampled & \checkmark & \checkmark & \checkmark & \checkmark \\
+VBLL-Rollout-CRPS-fair & sampled & \checkmark & \checkmark & $\times$ & \checkmark \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -440,15 +477,22 @@ dominating the aggregate evaluation.
 
 \subsection{Overall Long-Horizon Forecasting}
 
-Table~\ref{tab:overall} reports window-level free-running rollout performance
-on the test split. Deterministic-TF is a point-forecast baseline, so
-probabilistic metrics are not applicable. Probabilistic rows use 128 stochastic
-rollout samples.
+Table~\ref{tab:overall} reports test-set free-running rollout performance
+computed over all valid window--horizon prediction pairs pooled across cells.
+This micro-averaged summary gives greater weight to cells that contribute more
+valid rollout windows, whereas Table~\ref{tab:cell-macro} reports cell-macro
+results that assign equal weight to each test cell. Deterministic-TF is a
+point-forecast baseline, so probabilistic metrics are not applicable.
+Probabilistic rows use 128 stochastic rollout samples. The overall tables show
+the same main pattern: rollout-aligned training improves the proper score and
+substantially tightens prediction intervals relative to teacher-forced VBLL
+training.
 
 \begin{table}[t]
 \centering
 \scriptsize
-\caption{Overall test performance.}
+\caption{Micro-averaged test performance over all valid window--horizon
+prediction pairs.}
 \label{tab:overall}
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{@{}lccccc@{}}
@@ -506,9 +550,6 @@ VBLL-Rollout-CRPS-fair
 \end{tabular}
 \end{table*}
 
-The overall tables show the same main pattern: rollout-aligned training
-improves the proper score and substantially tightens prediction intervals
-relative to teacher-forced VBLL training.
 Table~\ref{tab:cell-macro} reports per-cell macro results with 95\% bootstrap
 confidence intervals. Each metric is first computed separately for each test
 cell and then averaged across cells, so every cell receives equal weight
@@ -532,7 +573,7 @@ The fair-CRPS rollout control further reduces window-level MAE from 0.00373 to
 0.02088 to 0.00836 while PICP falls from 0.96342 to 0.77205. Its cell-macro
 PICP is 0.74501, and 17 of the 20 test cells fall below 0.90. The fair estimator
 corrects the finite-ensemble self-pair bias but does not enforce interval
-coverage; with only four training trajectories and uncertainty restricted to
+coverage. With only four training trajectories and uncertainty restricted to
 the VBLL output layer, the resulting posterior trajectories are overly
 concentrated. The lower CRPS therefore comes with systematic under-coverage
 and overconfidence rather than uniformly better uncertainty quantification.
@@ -541,11 +582,14 @@ The aggregate sampled negative-SoH rate is below the displayed precision for
 all VBLL rows, suggesting that the soft non-negativity penalty is effective in
 this setting but not proving a hard physical constraint.
 
-\subsection{Seed Robustness}
+\subsection{Seed Robustness and Horizon-Wise Behavior}
 
 To assess sensitivity to predictor initialization, we evaluate
 VBLL-Rollout-CRPS with the encoder and split seeds fixed at 42 and predictor
 seeds 42, 8209, and 9181. Table~\ref{tab:seed-robustness} reports the results.
+We also examine how probabilistic forecast accuracy, calibration, and
+sharpness vary with horizon. Table~\ref{tab:horizon} reports the results at
+representative forecast steps.
 
 \begin{table}[t]
 \centering
@@ -563,11 +607,6 @@ Pred. seed & MAE & CRPS & 90\% PICP & 90\% MPIW \\
 \bottomrule
 \end{tabular}
 \end{table}
-
-\subsection{Horizon-Wise Behavior}
-
-Table~\ref{tab:horizon} reports probabilistic forecasting results at
-representative forecast steps.
 
 \begin{table}[t]
 \centering
@@ -636,7 +675,7 @@ trajectories.
 \section{Limitations}
 
 Several limitations of this work should be noted. First, because we use a VBLL
-head, only the final output layer is Bayesian; all remaining layers are
+head, only the final output layer is Bayesian. All remaining layers are
 deterministic. Consequently, the
 predictive uncertainty does not fully disentangle epistemic uncertainty from
 aleatoric uncertainty. Second, the CRPS is computed using a finite ensemble of
@@ -739,51 +778,6 @@ for each valid horizon and then averaged over the valid window--horizon
 positions. A fair-ensemble variant excludes self-pairs and replaces $K^2$
 with $K(K-1)$.
 
-\subsection{Main Hyperparameters}
-
-Table~\ref{tab:appendix-hparams} records the main hyperparameters used by the
-scaled Severson experiments. The seed robustness runs keep the encoder and
-split seeds fixed at 42 and change only the predictor seed.
-
-\begin{table}[h]
-\centering
-\scriptsize
-\caption{Main hyperparameters and reproducibility fields.}
-\label{tab:appendix-hparams}
-\setlength{\tabcolsep}{2pt}
-\begin{tabular}{@{}p{0.40\columnwidth}p{0.53\columnwidth}@{}}
-\toprule
-Item & Value \\
-\midrule
-History window $M$ & 30 cycles \\
-Forecast horizon $H$ & 80 cycles \\
-Evaluation samples $K_{\mathrm{eval}}$ & 128 \\
-Cycle encoder input & voltage, current, temperature \\
-Cycle encoder & $d_z=256$, $d_{\mathrm{model}}=256$, 3 layers, 8 heads \\
-Encoder training & batch 256, AdamW, lr $2.0{\times}10^{-4}$, weight decay
-$1.0{\times}10^{-5}$ \\
-Encoder scheduler & ReduceLROnPlateau, factor 0.5, patience 6, min lr
-$1.0{\times}10^{-6}$; early stopping patience 12 \\
-Degradation module & 2 layers, hidden dimension 512 \\
-Autoregressive decoder & 2 layers, hidden dimension 512 \\
-VBLL prior variance & 0.5 \\
-Predictor optimizer & AdamW, base lr $2.0{\times}10^{-4}$, VBLL $\rho$ lr
-$1.0{\times}10^{-3}$, weight decay $1.0{\times}10^{-5}$ \\
-KL weight $\beta_{\mathrm{KL}}$ & $1.0{\times}10^{-4}$ \\
-State-loss weight $\lambda_{\mathrm{state}}$ & 1.0 \\
-CRPS weight $\lambda_{\mathrm{CRPS}}$ & 0.1 \\
-Negative-SoH penalty $\lambda_{\mathrm{neg}}$ & 0.1 for stochastic rollout;
-0 otherwise \\
-Training rollout samples & $K=4$ \\
-Rollout curriculum & 20, 40, and 80 steps from epochs 10, 30, and 50 \\
-Scheduled sampling & probability linearly increases from 0 to 0.25 over 100
-epochs for rollout-aligned runs \\
-Main seeds & encoder 42, predictor 42 \\
-Robustness seeds & encoder/split 42; predictor 42, 8209, and 9181 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
 \subsection{Data Processing and Code Links}
 \label{app:data-processing}
 
@@ -798,35 +792,25 @@ fast-charge processed cells from the local processed corpus. We therefore
 report this as a processed Severson-derived corpus rather than as the exact
 124-cell subset.
 
-The final camera-ready version will provide a public GitHub repository
-containing the code, processed-data manifest, configuration files, and
-evaluation outputs: [TODO: GitHub repository URL].
-The processed data release will document the original data source, parser
-version, split file, channel normalization statistics, and checksum for each
-artifact. The release will not replace the license or citation requirements
-of the original battery datasets.
+Code, configuration files, evaluation outputs, and processed-data metadata
+will be made publicly available upon acceptance. The release will preserve
+the original datasets' licensing and citation requirements.
 
 \bibliographystyle{IEEEtran}
 \begin{thebibliography}{1}
-
-\bibitem{su2024sohreview}
-L.~Su, J.~Zhang, C.~Wang, Y.~Zhang, Z.~Li, Y.~Song, T.~Jin, and Z.~Dong,
-``State-of-health estimation of lithium-ion batteries: A comprehensive
-literature review from cell to pack levels,'' \emph{Energy Conversion and
-Economics}, vol.~5, no.~3, pp. 166--188, 2024.
 
 \bibitem{severson2019}
 K.~A. Severson, P.~M. Attia, N.~Jin, N.~Perkins, B.~Jiang, Z.~Yang,
 M.~H. Chen, M.~Aykol, P.~K. Herring, D.~Fraggedakis, M.~Z. Bazant,
 S.~J. Harris, W.~C. Chueh, and R.~D. Braatz, ``Data-driven prediction of
 battery cycle life before capacity degradation,'' \emph{Nature Energy},
-vol.~4, pp. 383--391, 2019.
+vol.~4, pp. 383--391, 2019, doi: 10.1038/s41560-019-0356-8.
 
 \bibitem{bellomo2025transformersoh}
 M.~Bellomo, A.~Dolara, and F.~Grimaccia, ``An innovative Transformer-based
 approach for state of health trajectory prediction and remaining useful life
 estimation in lithium-ion batteries,'' in \emph{Proc. 2025 International
-Conference on Clean Electrical Power (ICCEP)}, 2025,
+Conference on Clean Electrical Power (ICCEP)}, pp. 492--495, 2025,
 doi: 10.1109/ICCEP65222.2025.11143638.
 
 \bibitem{huang2026ic2ml}
@@ -834,35 +818,39 @@ X.~Huang, C.~Liang, S.~Tao, Y.~Che, N.~Bian, J.~Zhang, R.~Wang, Y.~Zhang,
 B.~Xia, and X.~Zhang, ``IC2ML: Unified battery state-of-health, degradation
 trajectory and remaining useful life prediction via intra-cycle and inter-cycle
 enhanced machine learning,'' \emph{Journal of Power Sources}, vol.~666,
-article 239148, 2026.
+article 239148, 2026, doi: 10.1016/j.jpowsour.2025.239148.
 
 \bibitem{hu2025batterygpt}
 J.~Hu, P.~Fu, Z.~Wei, Y.~Huang, J.~Early, A.~Fly, and Y.~Zhang, ``Early
 prediction of lithium-ion battery degradation with a generative pre-trained
-transformer,'' \emph{Nature Communications}, vol.~17, article 126, 2026.
+transformer,'' \emph{Nature Communications}, vol.~17, article 126, 2026,
+doi: 10.1038/s41467-025-66819-0.
 
 \bibitem{munna2026fusion}
 M.~A. Munna, Z.~Deng, J.~Wang, Z.~Yuan, F.~Zhang, and J.~Liu,
 ``Fusion-enhanced Transformer architecture for uncertainty-aware
 state-of-health estimation of lithium-ion batteries using partial-voltage
-data,'' \emph{Journal of Energy Storage}, vol.~164, article 122170, 2026.
-
-\bibitem{parimala2026}
-C.~H. Parimala, P.~S. Varma, R.~S. Kumar, A.~R. Singh,
-B.~Mohapatra, and H.~K. Addis, ``Uncertainty aware hybrid learning framework
-for fast and safe charging of lithium-ion batteries using multi-fidelity
-observers,'' \emph{Scientific Reports}, vol.~16, article 2452, 2026.
+data,'' \emph{Journal of Energy Storage}, vol.~164, article 122170, 2026,
+doi: 10.1016/j.est.2026.122170.
 
 \bibitem{wang2026uqreview}
 K.~Wang, F.~Cuzzolin, K.~Shariatmadar, D.~Moens, and H.~Hallez,
 ``A review of uncertainty representation and quantification in neural
 networks,'' \emph{IEEE Transactions on Pattern Analysis and Machine
-Intelligence}, vol.~48, no.~3, pp. 2476--2495, 2026.
+Intelligence}, vol.~48, no.~3, pp. 2476--2495, 2026,
+doi: 10.1109/TPAMI.2025.3626645.
 
 \bibitem{bengio2015scheduled}
 S.~Bengio, O.~Vinyals, N.~Jaitly, and N.~Shazeer, ``Scheduled sampling for
 sequence prediction with recurrent neural networks,'' in \emph{Advances in
 Neural Information Processing Systems}, vol.~28, pp. 1171--1179, 2015.
+
+\bibitem{su2024sohreview}
+L.~Su, Y.~Xu, and Z.~Dong,
+``State-of-health estimation of lithium-ion batteries: A comprehensive
+literature review from cell to pack levels,'' \emph{Energy Conversion and
+Economics}, vol.~5, no.~4, pp. 224--242, 2024,
+doi: 10.1049/enc2.12125.
 
 \bibitem{lim2026worldmodel}
 K.~C. Lim and K.~W. See, ``World model for battery degradation prediction under
@@ -871,7 +859,8 @@ non-stationary aging,'' arXiv:2603.10527, 2026.
 \bibitem{rasul2026ensemble}
 M.~J.~M.~A. Rasul, A.~Abbas, J.~Baek, and J.~Kim, ``A hybrid ensemble learning
 framework with uncertainty quantification for state-of-health estimation in
-lithium-ion batteries,'' \emph{Measurement}, vol.~266, article 120528, 2026.
+lithium-ion batteries,'' \emph{Measurement}, vol.~266, article 120528, 2026,
+doi: 10.1016/j.measurement.2026.120528.
 
 \bibitem{harrison2024vbll}
 J.~Harrison, J.~Willes, and J.~Snoek, ``Variational Bayesian last layers,'' in
@@ -880,12 +869,14 @@ J.~Harrison, J.~Willes, and J.~Snoek, ``Variational Bayesian last layers,'' in
 \bibitem{gneiting2007scoring}
 T.~Gneiting and A.~E. Raftery, ``Strictly proper scoring rules, prediction,
 and estimation,'' \emph{Journal of the American Statistical Association},
-vol.~102, no.~477, pp. 359--378, 2007.
+vol.~102, no.~477, pp. 359--378, 2007,
+doi: 10.1198/016214506000001437.
 
 \bibitem{gneiting2007calibration}
 T.~Gneiting, F.~Balabdaoui, and A.~E. Raftery, ``Probabilistic forecasts,
 calibration and sharpness,'' \emph{Journal of the Royal Statistical Society:
-Series B (Statistical Methodology)}, vol.~69, no.~2, pp. 243--268, 2007.
+Series B (Statistical Methodology)}, vol.~69, no.~2, pp. 243--268, 2007,
+doi: 10.1111/j.1467-9868.2007.00587.x.
 \end{thebibliography}
 
 \end{document}
