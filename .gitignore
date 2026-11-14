@@ -23,3 +23,10 @@ missfont.log
 venv/
 wandb/
 tmp/
+
+# Generated experiment releases and local figure previews
+outputs/
+release_artifacts/
+*.zip
+*.zip.partial
+*.safetensors

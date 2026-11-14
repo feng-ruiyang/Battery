@@ -1,0 +1,89 @@
+{
+  "method": "VBLL-Rollout-CRPS",
+  "best_epoch": 94,
+  "checkpoint_relative": "checkpoint_archive/20261112_consolidated/machines/autodl-container-ggd2kdt87v-0fa84c86/files/root/autodl-tmp/BatteryProject/Battery/code/outputs/severson_latent_tf_vbll/runs/severson_fastenc_scale256_vbll_newcfg_20260808_094639/best.pt",
+  "checkpoint_sha256": "c502b19e42a4983799d0325d5420d2dab92c3c0fcd5de313060056ca24aaccda",
+  "cache_relative": "scale256_fast_artifacts/latent_cache/severson_scale256_fast_encoder_20260808_002315_best/latents.npz",
+  "split_relative": "data/severson-2019/processed/splits/cell_random_seed_42.jsonl",
+  "config": {
+    "experiment": {
+      "name": "severson_latent_tf_vbll",
+      "seed": 42,
+      "output_dir": "outputs/severson_latent_tf_vbll",
+      "timestamped_output": true,
+      "run_name": "severson_fastenc_scale256_vbll_newcfg_20260808_094639"
+    },
+    "data": {
+      "processed_dir": "/root/autodl-tmp/data/severson-2019/processed",
+      "split_file": "/root/autodl-tmp/data/severson-2019/processed/splits/cell_random_seed_42.jsonl",
+      "latent_cache": "/root/autodl-tmp/data/severson-2019/processed/latent_cache/severson_scale256_fast_encoder_20260808_002315_best/latents.npz",
+      "window": 30,
+      "horizon": 80,
+      "latent_dim": 256,
+      "aux_dim": 0
+    },
+    "model": {
+      "kind": "latent_tf_vbll",
+      "history_dim": 512,
+      "decoder_dim": 512,
+      "vbll_prior_variance": 0.5
+    },
+    "training": {
+      "objective": "nll",
+      "batch_size": 128,
+      "num_workers": 8,
+      "pin_memory": true,
+      "persistent_workers": true,
+      "prefetch_factor": 2,
+      "log_every_n_steps": 50,
+      "max_epochs": 120,
+      "lr": 0.0002,
+      "weight_decay": 1e-05,
+      "beta_kl": 0.0001,
+      "lambda_state": 1.0,
+      "lambda_negative": 0.0,
+      "lambda_smooth": 0.0,
+      "device": "auto",
+      "vbll_rho_lr_multiplier": 5.0,
+      "scheduled_sampling": {
+        "enabled": true,
+        "start_epoch": 10,
+        "end_epoch": 40,
+        "start_probability": 0.0,
+        "end_probability": 0.25,
+        "validation_probability": 1.0
+      },
+      "stochastic_rollout": {
+        "enabled": true,
+        "start_epoch": 10,
+        "prefix_mode": "generated",
+        "num_samples": 4,
+        "weight": 0.1,
+        "objective": "crps",
+        "negative_weight": 0.1,
+        "validation_num_samples": 8,
+        "validation_horizon": 80,
+        "validation_seed": 42,
+        "horizon_schedule": [
+          {
+            "start_epoch": 10,
+            "horizon": 20
+          },
+          {
+            "start_epoch": 30,
+            "horizon": 40
+          },
+          {
+            "start_epoch": 50,
+            "horizon": 80
+          }
+        ]
+      }
+    },
+    "logging": {
+      "backend": "wandb",
+      "project": "battery-soh-bnn",
+      "offline": false
+    }
+  }
+}

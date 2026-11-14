@@ -63,6 +63,36 @@ def build_model(cfg: dict) -> SOHProbabilisticPredictor:
     raise ValueError(f"Unsupported model kind: {kind}")
 
 
+def rollout_validation_settings(cfg: dict) -> dict:
+    """Allow identical checkpoint selection even when a training branch is disabled.
+
+    Without an explicit override, preserve the original experiment behavior.
+    These options affect evaluation only; train_one_epoch uses its own switches.
+    """
+    train_cfg = cfg.get("training", {})
+    ss = train_cfg.get("scheduled_sampling", {})
+    rollout = train_cfg.get("stochastic_rollout", {})
+    samples = int(rollout.get("validation_num_samples", 0)) if rollout.get("enabled", False) else 0
+    settings = {
+        "sampling_probability": float(ss.get("validation_probability", 1.0)) if ss.get("enabled", False) else 0.0,
+        "num_samples": samples,
+        "horizon": int(rollout.get("validation_horizon", rollout.get("horizon", 0))) if samples > 0 else 0,
+        "seed": int(rollout.get("validation_seed", 42)),
+        "prefix_mode": stochastic_rollout_prefix_mode(cfg),
+    }
+    override = train_cfg.get("rollout_validation", {})
+    if set(override) - set(settings):
+        raise ValueError(f"Unknown rollout_validation options: {set(override) - set(settings)}")
+    settings.update(override)
+    if not 0 <= settings["sampling_probability"] <= 1:
+        raise ValueError("Validation sampling probability must be in [0, 1]")
+    if settings["num_samples"] < 0 or (settings["num_samples"] > 0 and settings["horizon"] <= 0):
+        raise ValueError("Invalid validation sample count/horizon")
+    if settings["prefix_mode"] not in {"generated", "teacher_forced"}:
+        raise ValueError("Invalid validation prefix mode")
+    return settings
+
+
 def main() -> None:
     args = parse_args()
     cfg = load_yaml(args.config)
@@ -126,25 +156,13 @@ def main() -> None:
     best_val = float("inf")
     start_epoch = 1
     max_epochs = int(train_cfg.get("max_epochs", 1))
-    schedule_cfg = train_cfg.get("scheduled_sampling", {})
-    val_sampling_probability = (
-        float(schedule_cfg.get("validation_probability", 1.0))
-        if bool(schedule_cfg.get("enabled", False))
-        else 0.0
-    )
     rollout_cfg = train_cfg.get("stochastic_rollout", {})
-    validation_rollout_samples = (
-        int(rollout_cfg.get("validation_num_samples", 0))
-        if bool(rollout_cfg.get("enabled", False))
-        else 0
-    )
-    validation_rollout_horizon = (
-        int(rollout_cfg.get("validation_horizon", rollout_cfg.get("horizon", 0)))
-        if validation_rollout_samples > 0
-        else 0
-    )
-    validation_seed = int(rollout_cfg.get("validation_seed", 42))
-    validation_prefix_mode = stochastic_rollout_prefix_mode(cfg)
+    validation = rollout_validation_settings(cfg)
+    val_sampling_probability = validation["sampling_probability"]
+    validation_rollout_samples = validation["num_samples"]
+    validation_rollout_horizon = validation["horizon"]
+    validation_seed = validation["seed"]
+    validation_prefix_mode = validation["prefix_mode"]
     rollout_negative_weight = float(rollout_cfg.get("negative_weight", 0.0))
     if args.resume is not None:
         resume_path = args.resume.expanduser()

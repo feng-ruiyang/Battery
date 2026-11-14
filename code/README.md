@@ -1,5 +1,11 @@
 # Battery SoH Code Workspace
 
+For the audited paper protocol, start with the [repository README](../README.md)
+and [controlled reproduction notes](docs/REPRODUCIBILITY.md). Historical dataset
+examples below may require dataset-specific configurations; they are not the
+scale256 paper configuration. Binary artifacts are documented in
+[ARTIFACTS.md](docs/ARTIFACTS.md).
+
 This directory contains the implementation workspace for the BNN-Transformer battery SoH project.
 
 The current code supports Severson, HUST, NASA, and CALCE-CS2 data ingestion, canonicalization,

@@ -140,7 +140,10 @@ def test_vbll_posterior_metrics_and_gradient_norm_are_finite() -> None:
     grad_norm = vbll_rho_grad_norm(model)
 
     assert metrics["weight_std_mean"] > 0.0
-    assert metrics["weight_std_max"] >= metrics["weight_std_mean"]
+    # A float32 reduction can round the mean slightly above identical entries.
+    assert metrics["weight_std_max"] >= metrics["weight_std_mean"] * (
+        1 - 2 * torch.finfo(torch.float32).eps
+    )
     assert metrics["bias_std"] > 0.0
     assert torch.isfinite(grad_norm)
     assert grad_norm.item() > 0.0
