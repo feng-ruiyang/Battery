@@ -92,6 +92,23 @@ new training does not initialize from its trained weights.
 
 ## Data provenance
 
+The existing processed dataset is hosted at
+[Hugging Face](https://huggingface.co/datasets/fryabcfry/severson-2019-processed).
+Its audited revision is `79f40996bf8eec2fb8a3bda391ed3072d853dfd5`.
+The existing `severson_processed_20260807.tar.gz` is 3,587,570,430 bytes;
+SHA-256: `f45812e423ba81acb3a53b5859ef3e9c1290358eb959c01d0144987159d65e58`.
+The server copy matches this hash. Download the existing file directly instead
+of uploading a duplicate:
+
+```bash
+curl -L --retry 3 -C - -o severson_processed_20260807.tar.gz \
+  'https://huggingface.co/datasets/fryabcfry/severson-2019-processed/resolve/79f40996bf8eec2fb8a3bda391ed3072d853dfd5/severson_processed_20260807.tar.gz?download=true'
+```
+
+On AutoDL, the provider's `source /etc/network_turbo` may be used in the download
+shell when ordinary outbound access is unavailable. No credentials are embedded
+in the download URL.
+
 The main release concerns a processed Severson-derived corpus. It contains 140
 processed cells and 114,314 cycle entries; this is not presented as the exact
 124-cell subset of the original paper. Splits and train-fitted normalization

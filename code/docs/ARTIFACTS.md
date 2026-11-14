@@ -23,8 +23,9 @@ Upload the archive files and top-level metadata together, preserving relative
 paths. `*.manifest.json` sidecars are small and useful for verifying downloads.
 Files ending in `.partial`, `.updating` or `.lock` are not release artifacts.
 Keep the existing processed-data revision until its manifest has been compared
-with this release. The target Hub repository is an explicit owner-supplied value;
-it is never guessed or silently created.
+with this release. The target Hub repository is the owner-supplied dataset
+`fryabcfry/severson-2019-processed`. Its existing processed archive is retained;
+new ZIPs and metadata can be added alongside it. No repository is created by this tool.
 
 Each experiment ZIP contains its original `run/` files, `ARTIFACT.json`,
 `FILES.json`, and, where available, original/portable training configurations.
