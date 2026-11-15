@@ -1,10 +1,9 @@
 # Battery SoH Code Workspace
 
-For the audited paper protocol, start with the [repository README](../README.md)
-and [controlled reproduction notes](docs/REPRODUCIBILITY.md). Historical dataset
-examples below may require dataset-specific configurations; they are not the
-scale256 paper configuration. Binary artifacts are documented in
-[ARTIFACTS.md](docs/ARTIFACTS.md).
+See the [repository README](../README.md) for paper reproduction,
+[experiment settings](docs/REPRODUCIBILITY.md) for the main protocol, and
+[ARTIFACTS.md](docs/ARTIFACTS.md) for checkpoint downloads.
+The examples below cover individual dataset workflows.
 
 This directory contains the implementation workspace for the BNN-Transformer battery SoH project.
 

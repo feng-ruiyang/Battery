@@ -1,7 +1,7 @@
 """Prepare, verify and run controlled CRPS-estimator or component ablations.
 
-The audited empirical checkpoint supplies configuration, never initial weights.
-Training starts from seed 42. Each variant has an explicit, checked intervention.
+The empirical checkpoint supplies the reference configuration.
+Each variant starts training from seed 42.
 """
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ def verified_copy(src: Path, dst: Path, expected: str | None = None) -> dict:
 def prepare(args: argparse.Namespace) -> None:
     import torch
     if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required; do not run the experiment in CPU mode")
+        raise RuntimeError("CUDA is required for this experiment")
     ref = json.loads(REFERENCE.read_text())
     shared = args.shared_root.resolve()
     if not shared.is_dir():
@@ -120,7 +120,7 @@ def prepare(args: argparse.Namespace) -> None:
     }
     payload = torch.load(records["baseline"]["path"], map_location="cpu", weights_only=True)
     if payload["config"] != ref["config"] or payload["epoch"] != ref["best_epoch"]:
-        raise ValueError("Reference checkpoint metadata does not match the audited baseline")
+        raise ValueError("Reference checkpoint metadata does not match the reference configuration")
     cfg = copy.deepcopy(payload["config"])
     del payload
     variant = args.variant
@@ -198,7 +198,7 @@ def preflight(run: Path) -> None:
     cfg, manifest = verify_run(run)
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required")
-    # Check the actual dispatch used by training, catching old code that ignores crps_variant.
+    # Check the CRPS variant selected by the training objective.
     samples = torch.tensor([0., 2., 4., 6.]).reshape(4, 1, 1)
     batch = {"soh_future": torch.tensor([[1.]]), "mask": torch.ones(1, 1, dtype=torch.bool)}
     fair = copy.deepcopy(cfg)
@@ -223,7 +223,7 @@ def preflight(run: Path) -> None:
         raise ValueError("Overlapping cell split")
     datasets = {s: LatentWindowDataset(cache, cells, 30, 80) for s, cells in ids.items()}
     if len(datasets["test"]) != 17317:
-        raise ValueError("Test windows differ from the audited experiment")
+        raise ValueError("Test windows differ from the reference experiment")
     items = []
     for index in range(len(datasets["train"])):
         item = datasets["train"][index]

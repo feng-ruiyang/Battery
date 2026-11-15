@@ -1,6 +1,6 @@
-# Controlled experiment protocol
+# Experiment settings
 
-## Fixed scientific settings
+## Main configuration
 
 | Setting | Value |
 |---|---|
@@ -21,10 +21,8 @@
 | Checkpoint selection | validation CRPS + 0.1 times negative penalty |
 | Probabilistic test evaluation | 128 samples, batch 32, seed 42 |
 
-The default historical YAML examples are not the audited scale256 protocol.
-The exact reference is `configs/revision/rollout_main_seed42_reference.json`.
-Configuration paths alone are not proof that two caches are identical: compare
-SHA-256 digests in the release manifest.
+The main configuration is `configs/revision/rollout_main_seed42_reference.json`.
+Cache hashes are listed in the release manifest.
 
 ## Components
 
@@ -40,33 +38,23 @@ SHA-256 digests in the release manifest.
 preserves the full model's checkpoint-selection protocol for deletion ablations.
 Validation uses no gradients and preserves the training RNG state.
 All probabilistic test rows use empirical CRPS with 128 samples, including models
-trained with fair CRPS. The two estimator names must not be confused with the
-test metric definition.
+trained with fair CRPS.
 
-## Release categories
+## Archives
 
-- `controlled`: audited main, seed and new controlled-estimator experiments.
-- `legacy_complete`: completed runs whose settings differ from the controlled
-  protocol. Preserve their results, but do not silently mix them into its tables.
-- `evaluation_only`: saved predictions/metrics are present, but a matching
-  training checkpoint has not been recovered.
-- `pending`: a live pipeline; ZIP creation waits for its completion state.
-- Incomplete or unverified snapshots remain in the server's original archive
-  and are listed in the inventory, not promoted to completed experiments.
+- `controlled`: main, seed and controlled-estimator experiments.
+- `legacy_complete`: completed experiments with earlier configurations.
+- `evaluation_only`: saved predictions and metrics; checkpoint unavailable.
+- `pending`: experiments awaiting completion and packaging.
 
-Known provenance findings are included in the release inventory. In particular,
-`severson_scale256_fast_encoder_seed8161_20260813_112351` exists as both epoch-2
-and epoch-120 snapshots on different machines. Use the completed snapshot and
-its matching cache. The old uncontrolled fair run must not be substituted for
-the new 512-dimensional controlled fair experiment.
+The release inventory records each run's configuration, checkpoint epoch and
+matching latent cache.
 
-## Evaluation scope
+## Evaluation
 
 The dataset includes partial-future windows with masks. The test set has 17,317
-windows from 20 cells; 15,737 have all 80 future targets. Always respect masks,
-cell identities and forecast origins when comparing predictions. Report whether
-results are window-micro or cell-macro and whether they use best or last weights.
+windows from 20 cells; 15,737 have all 80 future targets. Metrics use valid targets
+and support window-micro and cell-macro aggregation. Results are labeled by
+best or last checkpoint.
 
-A frozen encoder-42 latent cache is available. Do not claim raw-curve-to-output
-reproduction unless the matching original encoder checkpoint is present in the
-chosen release. Predictor reproduction from the provided cache is supported.
+Predictor evaluation uses the supplied frozen encoder-42 latent cache.

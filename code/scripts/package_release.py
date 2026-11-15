@@ -1,6 +1,6 @@
-"""Create verified ZIP snapshots from explicit experiment/data release recipes.
+"""Package experiment and data ZIPs with manifests and checksums.
 
-No network upload is performed. Running pipelines are gated by their state files.
+Completion-state files determine when each experiment is ready to package.
 """
 from __future__ import annotations
 import argparse
