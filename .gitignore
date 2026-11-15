@@ -1,32 +1,20 @@
-.DS_Store
-
-# Python/build artifacts
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
-*.egg-info/
 
-# LaTeX intermediates
-*.aux
-*.fdb_latexmk
-*.fls
-*.log
-*.out
-*.toc
-*.synctex.gz
-missfont.log
-
-# Local environments and secrets
-.env
-.venv/
-venv/
-wandb/
-tmp/
-
-# Generated experiment releases and local figure previews
+data/raw/
+data/processed/
+data/latent_cache/
 outputs/
-release_artifacts/
-*.zip
-*.zip.partial
-*.safetensors
+wandb/
+
+*.ckpt
+*.pt
+*.pth
+*.npz
+*.parquet
+
+
+.venv/
+.DS_Store

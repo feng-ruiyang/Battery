@@ -1,9 +1,4 @@
-# Battery SoH Code Workspace
-
-See the [repository README](../README.md) for paper reproduction,
-[experiment settings](docs/REPRODUCIBILITY.md) for the main protocol, and
-[ARTIFACTS.md](docs/ARTIFACTS.md) for checkpoint downloads.
-The examples below cover individual dataset workflows.
+# Dataset workflows
 
 This directory contains the implementation workspace for the BNN-Transformer battery SoH project.
 

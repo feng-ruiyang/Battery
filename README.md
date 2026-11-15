@@ -7,17 +7,18 @@ Prediction intervals summarize variation across sampled trajectories.
 
 ## Repository and artifact layout
 
-- `code/src/battery_soh/`: data, models, objectives, evaluation and utilities.
-- `code/scripts/`: preprocessing, training, evaluation and release commands.
-- `code/configs/`: dataset examples and the main experiment configuration.
-- `code/tests/`: model, data and experiment-protocol tests.
-- `code/docs/REPRODUCIBILITY.md`: experiment settings and evaluation details.
-- `code/docs/ARTIFACTS.md`: ZIP layout, verification and manual Hub upload.
-- `manuscript/`: paper sources and figures.
+- `src/battery_soh/`: data, models, objectives, evaluation and utilities.
+- `scripts/`: preprocessing, training, evaluation and release commands.
+- `configs/`: dataset examples and the main experiment configuration.
+- `tests/`: model, data and experiment-protocol tests.
+- `docs/REPRODUCIBILITY.md`: experiment settings and evaluation details.
+- `docs/ARTIFACTS.md`: ZIP layout, verification and manual Hub upload.
 
 Datasets, checkpoints and predictions are available on
 [Hugging Face](https://huggingface.co/datasets/fryabcfry/severson-2019-processed).
 `release_index.json` lists the experiments, archive contents and download hashes.
+
+Additional dataset workflows are described in [DATASETS.md](docs/DATASETS.md).
 
 ## Install
 
@@ -25,8 +26,7 @@ Use Python 3.11 or later and install a PyTorch build compatible with your device
 From this repository:
 
 ```bash
-python -m pip install -e './code[train,dev]'
-cd code
+python -m pip install -e '.[train,dev]'
 PYTHONPATH=src python -m pytest -q
 ```
 
@@ -39,7 +39,6 @@ processed metadata ZIP. Verify their hashes against `SHA256SUMS`, then extract
 into new directories:
 
 ```bash
-cd code
 python scripts/package_release.py extract /path/to/experiment.zip \
   --destination /path/to/experiment --sha256 <zip-sha256>
 python scripts/evaluate.py \
@@ -62,7 +61,6 @@ The main controlled protocol uses a fixed cell split and encoder cache,
 hidden dimensions 512.
 
 ```bash
-cd code
 python scripts/train_predictor.py \
   --config /path/to/experiment/config.portable.json \
   --latent-cache /path/to/matching-cache/latents.npz \
@@ -80,7 +78,7 @@ PYTHONPATH=src python scripts/run_revision_fair_rollout.py run --run-dir <prepar
 ```
 
 Additional deletion variants are `no_ss`, `no_sro` and `neither`.
-See [experiment settings](code/docs/REPRODUCIBILITY.md) for the complete protocol.
+See [experiment settings](docs/REPRODUCIBILITY.md) for the complete protocol.
 The runner loads the reference configuration and initializes training with seed 42.
 
 ## Data
